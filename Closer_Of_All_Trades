@@ -1,0 +1,164 @@
+//+------------------------------------------------------------------+
+//|                                             Close_All_Trades.mq5 |
+//|                                Copyright 2023, Andre Hollenbach. |
+//|                                                                  |
+//+------------------------------------------------------------------+
+
+
+#property version "1.0"
+
+//+------------------------------------------------------------------+
+//| Expert deinitialization function                                 |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+  {
+//---
+   Comment("");
+   ObjectDelete(StringToInteger(_Symbol),"Close all trades");
+   ObjectDelete(StringToInteger(_Symbol),"Magic Number");
+  }
+
+
+
+int OnInit()
+{
+   Comment("");
+   ObjectDelete(StringToInteger(_Symbol),"Close all trades");
+   // Erstelle ein Objekt
+      ObjectCreate
+      (
+         StringToInteger(_Symbol),              // Aktueller Chart
+         "Close all trades",                    // Objektname
+         OBJ_BUTTON,                            // Objekttyp
+         0,                                     // in welchem Fenster soll der Button sein? 0 = Hauptfenster
+         0,                                     // kein Datum
+         0                                      // kein Preis
+      );
+      
+      // setze Distanz vom Rand auf x-Achse
+      ObjectSetInteger(StringToInteger(_Symbol),"Close all trades",OBJPROP_XDISTANCE,200);
+      
+      // setze Distanz vom Rand auf y-Achse
+      ObjectSetInteger(StringToInteger(_Symbol),"Close all trades",OBJPROP_YDISTANCE,200);
+      
+      // setze Breite vom Button
+      ObjectSetInteger(StringToInteger(_Symbol),"Close all trades",OBJPROP_XSIZE,200);
+      
+      // setze Höhe vom Button
+      ObjectSetInteger(StringToInteger(_Symbol),"Close all trades",OBJPROP_YSIZE,50);
+      
+      // setze Chart-Ecke vom Button
+      ObjectSetInteger(StringToInteger(_Symbol),"Close all trades",OBJPROP_CORNER,2);
+      
+      // setze Text vom Button
+      ObjectSetString(StringToInteger(_Symbol),"Close all trades",OBJPROP_TEXT,"Close trades (1 = all)");
+      
+      // setze Farbe vom Button
+      ObjectSetInteger(StringToInteger(_Symbol),"Close all trades",OBJPROP_COLOR,clrLightPink);
+      
+      // setze Farbe vom Button
+      ObjectSetInteger(StringToInteger(_Symbol),"Close all trades",OBJPROP_BGCOLOR,clrGray);
+      
+      
+      // Erstelle ein Objekt
+      ObjectCreate
+      (
+         StringToInteger(_Symbol),              // Aktueller Chart
+         "Magic Number",                        // Objektname
+         OBJ_EDIT,                              // Objekttyp
+         0,                                     // in welchem Fenster soll der Button sein? 0 = Hauptfenster
+         0,                                     // kein Datum
+         0                                      // kein Preis
+      );
+      
+      // setze Distanz vom Rand auf x-Achse
+      ObjectSetInteger(StringToInteger(_Symbol),"Magic Number",OBJPROP_XDISTANCE,200);
+      
+      // setze Distanz vom Rand auf y-Achse
+      ObjectSetInteger(StringToInteger(_Symbol),"Magic Number",OBJPROP_YDISTANCE,250);
+      
+      // setze Breite vom Button
+      ObjectSetInteger(StringToInteger(_Symbol),"Magic Number",OBJPROP_XSIZE,200);
+      
+      // setze Höhe vom Button
+      ObjectSetInteger(StringToInteger(_Symbol),"Magic Number",OBJPROP_YSIZE,50);
+      
+      // setze Chart-Ecke vom Button
+      ObjectSetInteger(StringToInteger(_Symbol),"Magic Number",OBJPROP_CORNER,2);
+      
+      // setze Text vom Button
+      ObjectSetString(StringToInteger(_Symbol),"Magic Number",OBJPROP_TEXT,"Enter Magic number here.");
+      
+      // setze Farbe vom Button
+      ObjectSetInteger(StringToInteger(_Symbol),"Magic Number",OBJPROP_COLOR,clrWhite);
+      
+      // setze Farbe vom Button
+      ObjectSetInteger(StringToInteger(_Symbol),"Magic Number",OBJPROP_BGCOLOR,clrGray);
+   
+      return(INIT_SUCCEEDED); 
+}
+
+
+// um traden zu können, muss diese Bibliothek enthalten sein
+#include <Trade\Trade.mqh>
+
+// eine neue Instanz von CTrade erstellen mit dem Namen trade
+CTrade trade;
+
+
+// neue Funktion zum Event-Handling des Buttons
+void OnChartEvent(const int id,
+                  const long &lparam,
+                  const double &dparam,
+                  const string &sparam)
+
+{
+   // wenn ein Objekt angeklickt wurde
+   if(id == CHARTEVENT_OBJECT_CLICK)
+   {
+      // wenn es das Objekt "Close all trades" ist
+      if(sparam == "Close all trades")
+      {
+         // Chartausgabe
+         //Comment(sparam+" wurde angeklickt.");
+         
+         // String vom Button holen
+         ulong  Magic = StringToInteger(ObjectGetString(StringToInteger(_Symbol),"Magic Number",OBJPROP_TEXT));
+         
+         trade.SetExpertMagicNumber(Magic);
+         
+         if( Magic == 1)
+         {
+            for(int i = PositionsTotal()-1; i>= 0; i--)
+            {
+               ulong ticket = PositionGetTicket(i);
+               {
+                  trade.PositionClose(ticket,50);
+               }
+            } 
+         }
+         
+         for(int i = PositionsTotal()-1; i>= 0; i--)
+         {
+            ulong ticket = PositionGetTicket(i);
+            if(PositionGetString(POSITION_SYMBOL) == _Symbol)
+            if(PositionGetInteger(POSITION_MAGIC) == Magic)
+            {
+               trade.PositionClose(ticket,50);
+            }
+         } 
+         
+         // setze Text vom Button
+         ObjectSetString(StringToInteger(_Symbol),"Magic Number",OBJPROP_TEXT,"Enter Magic number here.");
+         Magic = NULL;
+      }
+      
+      // entferne den EA nach Ausführung
+      ExpertRemove();
+   }
+}
+
+
+
+
+
