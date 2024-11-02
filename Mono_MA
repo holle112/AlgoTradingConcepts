@@ -1,0 +1,2184 @@
+#property version "1.2"
+//+------------------------------------------------------------------+
+//| Include & Variables                                              |
+//+------------------------------------------------------------------+
+#include <Trade\Trade.mqh>
+CTrade trade;
+int MovingAverage;
+double Bid, Ask;
+MqlRates rates[];
+int LongAnzahl, ShortAnzahl;
+enum DirectionListe { Buy, Sell, Buy_and_Sell };
+enum YesNoListe { Yes, No };
+double Faktor = 1;
+bool daysignal = false;
+
+
+// alles für new bar
+static datetime LastBar = 0;
+datetime ThisBar = 0;
+
+
+double high = 0;
+double low = 0;
+int highIndex = 0;
+int lowIndex = 0;
+double SL_distance_long, SL_distance_short;
+double SLPoints;
+
+
+// alles für TSL
+double LP_Price_long = 0;        // Entfernung zwischen Opening Price und der gelben Linie
+double LP_Price_short = 0;
+double TSL_Price_long = 0;
+double TSL_Price_short = 0;
+double Long_Price = 0;
+double Short_Price = 0;
+double long_distance, short_distance;
+
+
+// alles für OnTester
+string monat = "";
+int gewinnmonatscounter = 0;
+double equ_alt = AccountInfoDouble(ACCOUNT_EQUITY);
+double monatsgewinn = 0;
+enum Testresult { WinMonths, ComplexCriteria, WinMonthsRecFac, CC_TC };
+
+
+// alles für SingleTrades
+string TradesLong    = "Verboten";
+string TradesShort   = "Verboten";
+static datetime letzteKerze = 0;
+
+
+// alles für OnlyOneTradePerDay
+datetime dayzero           = 0;
+bool long_schon_gehandelt  = true;
+bool short_schon_gehandelt = true;
+
+
+// alles für remove SLTP
+double PosiSL_long = 0;
+double PosiTP_long = 0;
+double PosiSL_short = 0;
+double PosiTP_short = 0;
+enum SLTPList { in_Backtests, in_Live, in_both, never };
+bool darfTSLsetzen_long = true;
+bool darfTSLsetzen_short = true;
+
+
+
+
+
+
+//+------------------------------------------------------------------+
+//| Inputs                                                           |
+//+------------------------------------------------------------------+
+input group "====== General settings ======"
+input long MagicNumber = 999;                                  // Magic number
+input string Trade_Comment = "Mono MA";                        // Trade Comment
+input DirectionListe WelcheRichtung = Buy;                     // Trade Directions
+input YesNoListe CrossoverClose = No;                          // Cross Over Close (bar closing on opposite side of MA)
+input YesNoListe CrossoverCloseInLoss = No;                    // Cross Over Close while being in a loss
+
+input group "====== Position Settings ======"
+double input Risiko_in_Prozent = 1;                            // Risk in %
+input int Signalkerzen = 2;                                    // how many signal candles
+int      toCopy = Signalkerzen + 5;
+
+input group "====== Stop Settings ======"
+input int BarAnzahl = 160;                                     // number of bars for SL calculation
+input int stop = 60;                                           // stop loss in % to lowest candle
+input int take = 700;                                          // take profit in % to the Stop Loss
+input int min_SL = 250;                                        // minimum stop (in points)
+input int max_SL = 1000;                                       // maximum stop (in points)
+
+input group "====== Trailing Stop Loss Settings ======"
+input int LockProfit = 40;                                     // Lock Profit in % of SL distance
+input int TSL = 60;                                            // Trailing Stop Loss in % of SL distance ( 0 = off )
+
+input group "====== Moving Average Settings ======"
+input int Period_MA = 150;                                     // Moving Average Period
+input ENUM_MA_METHOD MA_Method = MODE_EMA;                     // Moving Average Method
+input ENUM_TIMEFRAMES timeframe = PERIOD_H1;                   // Timeframe
+input ENUM_APPLIED_PRICE MA_Price = PRICE_CLOSE;               // Moving Average applied Price (Standard: Close)
+input int MA_shift = 0;                                        // Moving Average shift (Standard: 0)
+
+/*
+input group "====== ATR Settings ======"
+input ENUM_TIMEFRAMES vola_timeframe = PERIOD_H1;              // Timeframe for volatility filter
+input int vola_period = 14;                                    // Period for volatility filter ( 0 = off || Standard = 14 )
+
+input group "====== ADX Trendfilter Settings ======"
+input ENUM_TIMEFRAMES trend_timeframe = PERIOD_H1;             // Timeframe for ADX Trendfilter
+input int trend_period = 14;                                   // Period for volatility filter ( 0 = off || Standard = 14 )
+input int ADX0_Limit = 20;                                     // ADX-Limit-Value (Standard: 20)
+*/
+
+input group "====== Day filter ======"
+input bool InpMonday = false;                                  // trade on mondays
+input bool InpTuesday = true;                                  // trade on tuesdays
+input bool InpWednesday = true;                                // trade on wednesdays
+input bool InpThursday = true;                                 // trade on thursday
+input bool InpFriday = false;                                  // trade on fridays
+
+input group "====== Time Settings ======" 
+input YesNoListe Zeithandel = Yes;                             // Custom Trading Time Session
+input int TimeStartHour = 4;                                   // Trading allowed from *hour*
+input int TimeStartmin = 0;                                    // Trading allowed from *minute*
+input int TimeEndHour = 10;                                    // Trading allowed until *hour*
+input int TimeEndMin = 0;                                      // Trading allowed until *minute*                                         
+bool UhrzeitHandelErlaubt = false;
+
+input group "====== Month Settings ======" 
+input bool InpJanuary = false;                                 // trade in January
+input bool InpFebruary = true;                                 // trade in February
+input bool InpMarch = false;                                   // trade in March
+input bool InpApril = true;                                    // trade in April
+input bool InpMay = false;                                     // trade in May
+input bool InpJune = true;                                     // trade in June
+input bool InpJuly = false;                                    // trade in July
+input bool InpAugust = false;                                  // trade in August
+input bool InpSeptember = true;                                // trade in September
+input bool InpOctober = true;                                  // trade in October
+input bool InpNovember = false;                                // trade in November
+input bool InpDecember = true;                                 // trade in December
+bool MonatsHandelErlaubt = false;
+
+input group "====== Backtest Settings ======"
+input YesNoListe OnTestFunction = No;                          // Use OnTester() - function
+input Testresult Results = ComplexCriteria;                    // Backtest result output parameter
+input YesNoListe ExpertsPrints = Yes;                          // Print comments in Experts tab
+
+
+input group "====== Additional Settings ======"
+input int DayClose = 10;                                       // close trades after X days (0 = off)
+input YesNoListe OneTrade  = No;                               // Only one trade per day
+input SLTPList SLTPRemove = in_both;                           // Remove SL and TP...
+input string Entfernungszeit = "22:45";                        // remove SL and TP at hh:mm
+input string Einsetzungszeit = "01:25";                        // re-put SL and TP at hh:mm
+
+
+
+
+
+
+
+
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   trade.SetExpertMagicNumber(MagicNumber);
+   
+   if(ExpertsPrints == No && !MQLInfoInteger(MQL_TESTER))
+   {
+      Alert("EA will not be loaded. Experts print must be activated."); 
+      return(INIT_FAILED);
+   }
+   
+   if( CheckMonthsDays() == false )
+   {
+      return INIT_FAILED;
+   }
+   
+   MovingAverage = iMA(_Symbol,timeframe,Period_MA,MA_shift,MA_Method,MA_Price);
+   
+   //if(vola_period != 0 ) {handleATR  = iATR(_Symbol,vola_timeframe,vola_period);}
+   
+   //if(trend_period != 0 ) {handleADX = iADX(_Symbol,trend_timeframe,trend_period);}
+   
+   // falls der EA schon geladen wurde, bevor eine Verbindung zum Account aufgebaut werden konnte
+   // passiert immer dann wenn der EA schon auf dem Chart liegt und man etwas am Account ändert
+   // z. B. beim Passwortwechsel
+   // dann führe die OnInit() so lange aus, bis sie eine Verbindung besteht
+   if(!TerminalInfoInteger(TERMINAL_CONNECTED))
+   {
+      int random_number = rand();
+      Print("EA was loaded before the broker connection was established. This would lead to an error. Wait ", random_number/1000 ," seconds and try again.)");
+      Sleep(random_number);
+      return OnInit();
+   }
+   
+   if( !lostTSL() ) 
+   {
+      Alert("EA will not be loaded. Could not load Trailing SL function"); 
+      return(INIT_FAILED);
+   } 
+   else
+   {
+      ulong Pos_ID_long;
+      ulong Pos_ID_short;
+      
+      for(int i = PositionsTotal()-1; i>= 0; i--)
+      {
+         ulong ticket = PositionGetTicket(i);
+                 
+         if(PositionSelectByTicket(ticket))
+         {
+            if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+            if(PositionGetInteger(POSITION_MAGIC) != MagicNumber) continue;
+            if(PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY)
+            Pos_ID_long = PositionGetInteger(POSITION_IDENTIFIER);          
+         } 
+      }
+      
+      for(int i = PositionsTotal()-1; i>= 0; i--)
+      {
+         ulong ticket = PositionGetTicket(i);
+                 
+         if(PositionSelectByTicket(ticket))
+         {
+            if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+            if(PositionGetInteger(POSITION_MAGIC) != MagicNumber) continue;
+            if(PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_SELL)
+            Pos_ID_short = PositionGetInteger(POSITION_IDENTIFIER);          
+         } 
+      }
+      
+      if( LongAnzahl == 1 ) 
+      {
+         Print("TSL, SL and TP successfully loaded and applied to Buy-Position #",Pos_ID_long); 
+      }
+      
+      if( ShortAnzahl == 1 ) 
+      {
+         Print("TSL, SL and TP successfully loaded and applied to Sell-Position #",Pos_ID_short); 
+      }
+   }
+   
+   if(Einsetzungszeit > Entfernungszeit)
+   {
+      Alert("Remove-SL-Time must be later than Reput-SL-Time."); 
+      return(INIT_FAILED);
+   }
+   
+   return(INIT_SUCCEEDED);
+}
+
+
+
+
+//+------------------------------------------------------------------+
+//| Expert deinitialization function                                 |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+   IndicatorRelease(MovingAverage);
+   
+   //IndicatorRelease(handleATR);
+   
+   ObjectDelete(StringToInteger(_Symbol),"Trailing Stop Loss Buy");
+   ObjectDelete(StringToInteger(_Symbol),"Trailing Stop Loss Sell");
+}
+
+
+
+
+//+------------------------------------------------------------------+
+//| Expert OnTester function                                         |
+//+------------------------------------------------------------------+
+double OnTester()
+{
+   // geh direkt raus aus der OnTester Funktion, um Backtests zu beschleunigen
+   if( OnTestFunction == No ) { return 0; }
+   
+   
+   if( OnTestFunction == Yes )
+   {
+      // Auswahl, was returned werden soll:
+      // Complex Criteria oder der counter
+      if( Results == ComplexCriteria )
+      {
+         return TesterStatistics(STAT_COMPLEX_CRITERION);
+      }
+      
+      if( Results == WinMonths )
+      {
+         return gewinnmonatscounter;
+      } 
+      
+      if( Results == WinMonthsRecFac )
+      {
+         return gewinnmonatscounter*TesterStatistics(STAT_RECOVERY_FACTOR);
+      } 
+      
+      // Mischung aus gewichtetem Complex Critera und Trade Counter
+      if( Results == CC_TC )
+      {
+         double factor = 1;
+         
+         if( TesterStatistics(STAT_COMPLEX_CRITERION) >= 80 && TesterStatistics(STAT_COMPLEX_CRITERION) < 85 ) { factor = 1; }
+         if( TesterStatistics(STAT_COMPLEX_CRITERION) >= 85 && TesterStatistics(STAT_COMPLEX_CRITERION) < 90 ) { factor = 2; }
+         if( TesterStatistics(STAT_COMPLEX_CRITERION) >= 90 && TesterStatistics(STAT_COMPLEX_CRITERION) < 95 ) { factor = 3; }
+         if( TesterStatistics(STAT_COMPLEX_CRITERION) >= 95 && TesterStatistics(STAT_COMPLEX_CRITERION) < 99 ) { factor = 4; }
+         if( TesterStatistics(STAT_COMPLEX_CRITERION) >= 99 && TesterStatistics(STAT_COMPLEX_CRITERION) < 100 ) { factor = 5; }
+         
+         if( TesterStatistics(STAT_COMPLEX_CRITERION) >= 80 )
+         {
+            if( TesterStatistics(STAT_TRADES) > 100 )
+            {
+               return factor*(TesterStatistics(STAT_COMPLEX_CRITERION) + TesterStatistics(STAT_TRADES));
+            }
+         }
+         else
+         {
+            return TesterStatistics(STAT_COMPLEX_CRITERION);
+         }
+         
+      }
+   }
+   
+   
+   return 0;
+}
+
+
+
+
+
+//+------------------------------------------------------------------+
+//| Expert tick function                                             |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   // check for new bar
+   if(!CheckForNewBar()) {return;}
+   
+   // Bid, Ask holen
+   GetPrices();
+   
+   if(!TradeAnzahl()) {return;}
+   
+   if( TSL != 0 )
+   {
+      Swap_Calc();
+      TSL_Long();
+      TSL_Short();
+      if( LongAnzahl != 0) { SL_Linie_Buy(); }
+      if( ShortAnzahl != 0) { SL_Linie_Sell(); }
+   }
+ 
+   //Trendfilter();
+   
+   //VolaFilter();
+ 
+   Dayfilter();
+   
+   MonthFilter();
+   
+   CustomTradingTime();
+   
+   SingleTrades();
+
+   Signal();
+   
+   TimeCloser();
+   
+   verlustrechner();
+   
+   if( !DeleteGlobalVars() ) {return;}
+   
+   if( !oneTradePerDay() ) {return;}
+   
+   // decide if to remove SL and TP only in backtests or also in live trading
+   if( !WhenToRemoveSLTP() ) {return;}
+}
+
+
+
+
+// check for new bar
+bool CheckForNewBar()
+{
+   ThisBar = (datetime)SeriesInfoInteger(_Symbol,PERIOD_M1,SERIES_LASTBAR_DATE);
+   if(LastBar != ThisBar)
+   {
+      LastBar = ThisBar;
+      return true;
+   }
+   
+   return false;
+}
+
+
+
+// Preise bestimmen
+void GetPrices()
+{
+   Ask = NormalizeDouble(SymbolInfoDouble(_Symbol,SYMBOL_ASK),_Digits);
+   Bid = NormalizeDouble(SymbolInfoDouble(_Symbol,SYMBOL_BID),_Digits);
+   
+   if(CopyRates(_Symbol,timeframe,0,toCopy,rates)!=toCopy)
+      return;
+      
+   ArraySetAsSeries(rates,true);   
+   
+   //rates[0].high;  // zugriff auf aktuelle Kerze
+   
+   //rates[1].close; // zugriff auf letzte Kerze
+   
+   //rates[2].close; // zugriff auf vorletzte Kerze
+}
+
+
+
+// Buy-Position
+void Buy_Opening()
+{
+   if( daysignal )
+   if( UhrzeitHandelErlaubt )
+   if( TradesLong == "Erlaubt" )
+   if( long_schon_gehandelt == false )
+   if( MonatsHandelErlaubt == true )
+   if( LongAnzahl == 0 )
+   //if( VolaFilterErlaubtHandel == true )
+   //if( ADX_Signal == "uptrend" )
+   {
+      Stop_Calc_Long();
+      
+      // wichtig für Lotsize-Berechnung, da sonst zwei getrennte Funktionen für Long und Short notwendig wären
+      SLPoints = SL_distance_long;
+      
+      // prüfe, ob der Stop 0 wäre:
+      if(SL_distance_long != 0)
+      
+      if(trade.Buy(Lotsize(),NULL,Ask,Ask-(SL_distance_long),Ask+(SL_distance_long*take*0.01),Trade_Comment))
+      {
+         // alle folgenden Werte werden jeweils immer für diese Posi berechnet und sind dann unveränderlich:
+      
+         // Berechnung Distanz zwischen Opening Price und gelber Linie:
+         LP_Price_long = (SL_distance_long) * LockProfit * 0.01;
+         
+         // Berechnung, mit wieviel Abstand der SL nachgezogen werden soll:
+         TSL_Price_long = (SL_distance_long) * TSL * 0.01;
+   
+         // Berechnung, auf welchem Preis die gelbe Linie liegt:
+         Long_Price = LP_Price_long + Ask;
+         
+         
+         // Trades in der aktuellen Kerze verbieten:
+         TradesLong = "Verboten";
+         
+         // global Variables
+         GlobalVariableSet(_Symbol+" "+(string)MagicNumber+" MonoMA Buy Ask", Ask);
+         GlobalVariableSet(_Symbol+" "+(string)MagicNumber+" MonoMA Buy SL_distance", SL_distance_long);
+           
+         GlobalVariableSet(_Symbol+" "+(string)MagicNumber+" MonoMA PosiSL_long", (Ask-(SL_distance_long)));
+         GlobalVariableSet(_Symbol+" "+(string)MagicNumber+" MonoMA PosiTP_long", (Ask+(SL_distance_long*take*0.01)));
+          
+           
+         // normalerweise speichert das Terminal beim Schließen alle Global Variables in eine Datei
+         // stürzt das Terminal aber ab, kann es zu Fehlern beim Speichern kommen
+         // mit dieser Funktion erzwinge ich das Speichern direkt beim Erstellen der Variablen
+         GlobalVariablesFlush();
+         
+         if(ExpertsPrints == Yes)Print("Saved global variable: ",_Symbol+" "+(string)MagicNumber+" MonoMA Buy Ask", Ask);
+         if(ExpertsPrints == Yes)Print("Saved global variable: ",_Symbol+" "+(string)MagicNumber+" MonoMA Buy SL_distance", SL_distance_long);
+         
+         if(ExpertsPrints == Yes)Print("Saved global variable: ",_Symbol+" "+(string)MagicNumber+" MonoMA PosiSL_long: ",(Ask-(SL_distance_long)));
+         if(ExpertsPrints == Yes)Print("Saved global variable: ",_Symbol+" "+(string)MagicNumber+" MonoMA PosiTP_long: ",(Ask+(SL_distance_long*take*0.01))); 
+         
+         long_schon_gehandelt = true;
+         
+         LongAnzahl = 1;
+      }  
+   }
+}
+
+
+// Sell-Position
+void Sell_Opening()
+{
+   if( daysignal )
+   if( UhrzeitHandelErlaubt )
+   if( TradesShort == "Erlaubt" )
+   if( short_schon_gehandelt == false )
+   if( MonatsHandelErlaubt == true )
+   if( ShortAnzahl == 0 )
+   //if( VolaFilterErlaubtHandel == true )
+   //if( ADX_Signal == "downtrend" )
+   {
+      Stop_Calc_Short();
+      
+      // wichtig für Lotsize-Berechnung, da sonst zwei getrennte Funktionen für Long und Short notwendig wäre
+      SLPoints = SL_distance_short;
+      
+      // prüfe, ob der Stop 0 wäre:
+      if(SL_distance_short != 0)
+      
+      if(trade.Sell(Lotsize(),NULL,Bid,Bid + (SL_distance_short),Bid-(SL_distance_short*take*0.01),Trade_Comment))
+      {
+         // alle folgenden Werte werden jeweils immer für diese Posi berechnet und sind dann unveränderlich:
+      
+         // Berechnung Distanz zwischen Opening Price und lila Linie:
+         LP_Price_short = (SL_distance_short) * LockProfit * 0.01;
+         
+         // Berechnung, mit wieviel Abstand der SL nachgezogen werden soll:
+         TSL_Price_short = (SL_distance_short) * TSL * 0.01;
+         
+         // Berechnung, auf welchem Preis die lila  Linie liegt:
+         Short_Price = Bid - LP_Price_short;
+         
+         TradesShort = "Verboten";
+         
+   
+         // global Variables
+         GlobalVariableSet(_Symbol+" "+(string)MagicNumber+" MonoMA Sell Bid", Bid);
+         GlobalVariableSet(_Symbol+" "+(string)MagicNumber+" MonoMA Sell SL_distance", SL_distance_short);
+         
+         GlobalVariableSet(_Symbol+" "+(string)MagicNumber+" MonoMA PosiSL_short", (Bid + (SL_distance_short)) );
+         GlobalVariableSet(_Symbol+" "+(string)MagicNumber+" MonoMA PosiTP_short", (Bid-(SL_distance_short*take*0.01)) );
+         
+         // normalerweise speichert das Terminal beim Schließen alle Global Variables in eine Datei
+         // stürzt das Terminal aber ab, kann es zu Fehlern beim Speichern kommen
+         // mit dieser Funktion erzwinge ich das Speichern direkt beim Erstellen der Variablen
+         GlobalVariablesFlush();
+         
+         if(ExpertsPrints == Yes)Print("Saved global variable: ",_Symbol+" "+(string)MagicNumber+" MonoMA Sell Bid: ", Bid);
+         if(ExpertsPrints == Yes)Print("Saved global variable: ",_Symbol+" "+(string)MagicNumber+" MonoMA Sell SL_distance: ", SL_distance_short);
+         
+         if(ExpertsPrints == Yes)Print("Saved global variable: ",_Symbol+" "+(string)MagicNumber+" MonoMA PosiSL_short: ",(Bid + (SL_distance_short)));
+         if(ExpertsPrints == Yes)Print("Saved global variable: ",_Symbol+" "+(string)MagicNumber+" MonoMA PosiTP_short: ",(Bid-(SL_distance_short*take*0.01))); 
+         
+         short_schon_gehandelt = true;
+         
+         ShortAnzahl = 1;
+      }    
+   }  
+}
+
+
+
+
+void Signal()
+{
+   //if( !daysignal ) {return;}
+   double MA[];
+   ArraySetAsSeries(MA,true);
+   
+   // fang es ab, falls hier Fehler mit dem Array entstehen
+   // (da würde er auf Werte im Array zugreifen, die noch nicht existieren)
+   if(CopyBuffer(MovingAverage,0,0,toCopy,MA) != toCopy)
+      return;
+
+   
+   // prüfen, ob die letzte Kerze unter dem MA geclosed hat
+   if( rates[1].close < MA[1] )
+   if( LongAnzahl > 0 )
+   {
+      // close
+      for(int i = PositionsTotal()-1; i>= 0; i--)
+      {
+         ulong ticket = PositionGetTicket(i);
+         if(PositionSelectByTicket(ticket))
+         {
+            if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+            if(PositionGetInteger(POSITION_MAGIC) != MagicNumber) continue;
+            ulong type = PositionGetInteger(POSITION_TYPE);
+            double profit = PositionGetDouble(POSITION_PROFIT);
+            if(type == POSITION_TYPE_BUY)
+            if(CrossoverClose == Yes)  
+            {
+               trade.PositionClose(ticket);
+               if(ExpertsPrints == Yes)Print("Position #",ticket," was closed due to bar closing below/above the Moving Average.");
+            }
+            if(CrossoverCloseInLoss == Yes && profit < 0) 
+            {
+               trade.PositionClose(ticket);
+               if(ExpertsPrints == Yes)Print("Position #",ticket," was closed due to bar closing below/above the Moving Average while being in a loss.");
+            }
+         } 
+      }
+   }
+   
+   
+   // prüfen, ob die letzte Kerze unter dem MA geclosed hat
+   if( rates[1].close > MA[1] )
+   if( ShortAnzahl > 0 )
+   {
+      // close
+      for(int i = PositionsTotal()-1; i>= 0; i--)
+      {
+         ulong ticket = PositionGetTicket(i);
+         if(PositionSelectByTicket(ticket))
+         {
+            if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+            if(PositionGetInteger(POSITION_MAGIC) != MagicNumber) continue;
+            ulong type = PositionGetInteger(POSITION_TYPE);
+            double profit = PositionGetDouble(POSITION_PROFIT);
+            if(type == POSITION_TYPE_SELL)
+            if(CrossoverClose == Yes)  
+            {
+               trade.PositionClose(ticket);
+               if(ExpertsPrints == Yes)Print("Position #",ticket," was closed due to bar closing below/above the Moving Average.");
+            }
+            if(CrossoverCloseInLoss == Yes && profit < 0) 
+            {
+               trade.PositionClose(ticket);
+               if(ExpertsPrints == Yes)Print("Position #",ticket," was closed due to bar closing below/above the Moving Average while being in a loss.");
+            }
+         } 
+      }
+   }
+   
+   
+   
+  
+   
+  
+   
+   // ich glaube ich brauche hier wieder 2 schleifen, ich komme aber noch nicht ganz dahinter wie ich es bauen muss
+   // also ich habe 3 signalkerzen
+   // 3 kerzen müssen über dem MA schließen
+   // also prüfe ich folgendes:
+   // ist die drittletzte kerze über dem drittletzten MA-wert?
+   // wenn ja, dann prüfe jetzt:
+   // ist die zweitletzte über dem zweitletzten ... usw
+   
+   string signal_1 = "";
+   for( int x = 0; x < Signalkerzen; x++ )
+   {
+      if( rates[Signalkerzen - x].close > MA[Signalkerzen - x] )
+      {
+         signal_1 = "check";
+      }
+      else
+      {
+         signal_1 = "";
+         break;
+      }  
+   }
+   
+   // normales Signal
+   if( LongAnzahl == 0 ) 
+   // diese Zeile ist eig überflüssig, verbessert aber die Testergebnisse enorm:
+   if( rates[Signalkerzen+1].close < MA[Signalkerzen+1] )
+   if( WelcheRichtung == Buy || WelcheRichtung == Buy_and_Sell )
+   if( signal_1 == "check" )
+   {
+      Buy_Opening();
+   }
+
+
+   
+   
+   string signal_2 = "";
+   for( int x = 0; x < Signalkerzen; x++ )
+   {
+      if( rates[Signalkerzen - x].close < MA[Signalkerzen - x] )
+      {
+         signal_2 = "check";
+      }
+      else
+      {
+         signal_2 = "";
+         break;
+      }  
+   }
+   
+   
+   
+   // normales Signal
+   // diese Zeile ist eig überflüssig, verbessert aber die Testergebnisse enorm:
+   if( rates[Signalkerzen+1].close > MA[Signalkerzen+1] )
+   if( ShortAnzahl == 0 )
+   if( WelcheRichtung == Sell || WelcheRichtung == Buy_and_Sell )
+   if( signal_2 == "check" )
+   {
+      Sell_Opening();
+   }
+   
+
+   
+}
+
+
+
+
+// count open positions
+bool TradeAnzahl()
+{
+   LongAnzahl = 0;
+   ShortAnzahl = 0;
+   
+   int i=PositionsTotal() ;     
+   while (i>=0)
+   {
+      string symbol = PositionGetSymbol(i);
+      if(_Symbol == symbol)
+      if(PositionGetInteger(POSITION_MAGIC) == MagicNumber)
+      {
+         ulong PositionTicket = PositionGetInteger(POSITION_TICKET);
+         ulong PositionDirection = PositionGetInteger(POSITION_TYPE);
+         
+         if(PositionDirection == POSITION_TYPE_BUY)
+         {
+            LongAnzahl = LongAnzahl +1;
+         }
+         if(PositionDirection == POSITION_TYPE_SELL)
+         {
+            ShortAnzahl = ShortAnzahl +1;
+         }
+      }       
+      
+      i--;
+   }  
+   
+   if( LongAnzahl == 0 ) 
+   { 
+      ObjectDelete(StringToInteger(_Symbol),"Trailing Stop Loss Buy"); 
+      LP_Price_long = 0;
+      TSL_Price_long = 0;
+      Long_Price = 0;
+      
+      // wenn keine Longs offen sind, dann darf der TSL wieder gesetzt werden
+      darfTSLsetzen_long = true;
+   }  
+   
+   if( ShortAnzahl == 0 ) 
+   { 
+      ObjectDelete(StringToInteger(_Symbol),"Trailing Stop Loss Sell"); 
+      LP_Price_short = 0;
+      TSL_Price_short = 0;
+      Short_Price = 0;
+      
+      // wenn keine Shorts offen sind, dann darf der TSL wieder gesetzt werden
+      darfTSLsetzen_short = true;
+   } 
+   
+   
+   return true;
+}
+
+
+
+
+
+
+
+void Dayfilter()
+{
+   MqlDateTime tmp;
+   TimeToStruct(TimeTradeServer(),tmp);
+   int dayofweek = tmp.day_of_week;
+   
+   if( dayofweek == 1 && InpMonday == true )
+   {
+      daysignal = true;
+      return;
+   }
+   
+   if( dayofweek == 2 && InpTuesday == true )
+   {
+      daysignal = true;
+      return;
+   }
+   
+   if( dayofweek == 3 && InpWednesday == true )
+   {
+      daysignal = true;
+      return;
+   }
+   if( dayofweek == 4 && InpThursday == true )
+   {
+      daysignal = true;
+      return;
+   }
+   if( dayofweek == 5 && InpFriday == true )
+   {
+      daysignal = true;
+      return;
+   }
+   
+   
+   daysignal = false;
+}
+
+
+
+
+
+//+------------------------------------------------------------------+
+//| Custom Trading Time                                              |
+//+------------------------------------------------------------------+
+bool CustomTradingTime()
+{
+   if(Zeithandel == Yes)
+   {
+      MqlDateTime structTime;
+      TimeCurrent(structTime);
+      
+      structTime.hour = TimeStartHour;
+      structTime.min = TimeStartmin;
+      structTime.sec = 0;
+      datetime timeStart = StructToTime(structTime);
+      
+      structTime.hour = TimeEndHour;
+      structTime.min = TimeEndMin;
+      datetime timeEnd = StructToTime(structTime);
+
+      UhrzeitHandelErlaubt = TimeCurrent() >= timeStart && TimeCurrent() < timeEnd;
+   }
+   
+   
+   if(Zeithandel == No)
+   {
+      UhrzeitHandelErlaubt = true;
+   }
+   
+   // gib das Signal an die Hauptfunktion zurück
+   return UhrzeitHandelErlaubt;   
+}
+
+
+
+
+double Stop_Calc_Long()
+{
+   // gehe X kerzen zurück und suche innerhalb dieser den niedrigsten Preis
+   lowIndex = iLowest(NULL,timeframe,MODE_LOW,BarAnzahl,1);
+   low = iLow(NULL, timeframe, lowIndex);
+   
+   SL_distance_long = (Ask - low)*stop*0.01;
+     
+   if(SL_distance_long < min_SL * _Point)
+   {
+      SL_distance_long = min_SL * _Point;
+   }
+   
+   if( SL_distance_long > max_SL * _Point )
+   {
+      Print("Stop loss distance is higher than ",max_SL," points (",SL_distance_long/_Point,"). Trade will not be opened." );
+      SL_distance_long = 0;
+      
+      // Trades in der aktuellen Kerze verbieten:
+      TradesLong = "Verboten";
+   }
+   
+   return SL_distance_long;
+}
+
+
+
+double Stop_Calc_Short()
+{
+   // gehe X kerzen zurück und suche innerhalb dieser den höchsten Preis
+   highIndex = iHighest(NULL,timeframe,MODE_HIGH,BarAnzahl,1);
+   high = iHigh(NULL, timeframe, highIndex);
+   
+   SL_distance_short = (high - Bid)*stop*0.01;
+   
+   if(SL_distance_short < min_SL * _Point)
+   {
+      SL_distance_short = min_SL * _Point;
+   }
+   
+   if( SL_distance_short > max_SL * _Point )
+   {
+      Print("Stop loss distance is higher than ",max_SL," points (",SL_distance_short/_Point,"). Trade will not be opened." );
+      SL_distance_short = 0;
+      
+      // Trades in der aktuellen Kerze verbieten:
+      TradesShort = "Verboten";
+   }
+   
+   return SL_distance_short;
+}
+
+
+
+
+
+// Funktionsbeginn: Berechnung der Lotsize für Longs durch Angabe des Risikos in %
+double Lotsize()
+{  
+   double Equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   double riskTrade = Equity * Risiko_in_Prozent / 100;
+   double tickvalue = SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_VALUE);
+   double ticksize = SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_SIZE);
+   double lotstep = SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_STEP);
+   double riskPerLotStep = SLPoints / ticksize * tickvalue * lotstep;
+   double lots = riskTrade / riskPerLotStep * lotstep;
+   
+   
+   // beim FTMO Konto ist der Volume-Step bei Stocks 1, er kann also keine gerundeten Werte nehmen
+   if(lotstep == 1)
+   {
+      lots = MathRound(lots);
+   }
+   
+   if(ExpertsPrints == Yes)Print("The following variables have been used for lotsize-calculation:");
+   if(ExpertsPrints == Yes)Print(ticksize,"    ",tickvalue,"    ",SLPoints,"    ",lotstep,"    ",Equity,"    ",riskTrade,"    ",riskPerLotStep,"    ",lots,"    ",NormalizeDouble(lots,2));
+
+   
+   if(ticksize==0 || tickvalue == 0 || SLPoints == 0 || lotstep == 0 || Equity == 0 || riskTrade == 0 || riskPerLotStep == 0 || lots == 0)
+   {
+      if(ExpertsPrints == Yes)Print("One variable is 0. This would result in a wrong lotsize-calculation.");
+      if(ExpertsPrints == Yes)Print(ticksize,"    ",tickvalue,"    ",SLPoints,"    ",lotstep,"    ",Equity,"    ",riskTrade,"    ",riskPerLotStep,"    ",lots);
+      if(ExpertsPrints == Yes)Print("Position will not be opened. Instead the Lotsize-Calculation-Function will be called again.");
+      Sleep(2000);
+      Lotsize();
+      return 0;
+   }
+     
+  
+   
+   if(CheckVolumeValue(NormalizeDouble(lots,2)) == true) 
+   {
+      return NormalizeDouble(lots,2);
+   }
+   else return 0;
+}
+
+
+
+
+void TSL_Long()
+{  
+   
+   // falls der SL TP gerade entfernt ist, und sich währenddessen der Preis aber über die LockProfit-Linie bewegt, dann würde er den TSL setzen
+   // das verbiete ich hiermit
+   if( darfTSLsetzen_long == true )
+   if( Bid > Long_Price + long_distance )
+   {
+      int i=PositionsTotal()-1;     
+      while (i>=0)
+      {
+         string symbol = PositionGetSymbol(i);
+         if(symbol == _Symbol)
+         {
+            ulong PositionTicket     = PositionGetInteger(POSITION_TICKET);
+            ulong PositionDirection  = PositionGetInteger(POSITION_TYPE);
+            double CurrentStopLoss   = PositionGetDouble(POSITION_SL);
+            double CurrentTakeProfit = PositionGetDouble(POSITION_TP);
+            double NewStop  = (Bid - TSL_Price_long);
+            
+            if( PositionGetInteger(POSITION_MAGIC) == MagicNumber )
+            if( CurrentStopLoss < NormalizeDouble(NewStop,_Digits) )
+            if( PositionDirection == POSITION_TYPE_BUY )
+            //if( NormalizeDouble(NewStop,_Digits) > (Bid+(20*_Point)) ) // mit dieser Zeile setze ich fest, dass der SL mind. 2 Pips vom Preis entfernt sein muss
+            // das ist hier auskommentiert, da der Upload bei mql5.com auch so durchging. Alle Setfiles sind ertestet und diese Zeile veränderte alles Resultate
+            {
+               
+               if(!trade.PositionModify(PositionTicket,NormalizeDouble(NewStop,_Digits),CurrentTakeProfit))
+               {
+                  // wenn der SL nicht verschoben werden konnte, weil der Market closed ist, dann brich aus der Funktion.
+                  if(trade.ResultRetcode() == TRADE_RETCODE_MARKET_CLOSED) return;
+                  
+                  if(ExpertsPrints == Yes)printf("Stop Loss didn't move. Error: "+IntegerToString(trade.ResultRetcode()));
+                  for(int x = 2; x < 10; x++)
+                  {
+                     double angepasster_NewStop = Bid - (x*TSL_Price_long);
+                     if(ExpertsPrints == Yes)Print("adjusted NewStop: ",angepasster_NewStop);
+                     if(trade.PositionModify(PositionTicket,NormalizeDouble(angepasster_NewStop,_Digits),CurrentTakeProfit)) {break;}
+                  }
+               } 
+               else
+               {
+                  if(ExpertsPrints == Yes)Print("The EA with Magic Number ", MagicNumber, " has moved the SL. Bid: ",Bid," Long Price: ", Long_Price+long_distance," NewStop: ",NewStop);
+               }
+            }
+         }       
+         i--;
+      }
+   } 
+}
+
+
+
+
+// Funktionsaufruf der SL-Linie
+void SL_Linie_Buy()
+{
+   ObjectCreate(StringToInteger(_Symbol),"Trailing Stop Loss Buy", OBJ_HLINE,0,0,Long_Price+long_distance);
+   ObjectSetInteger(0,"Trailing Stop Loss Buy",OBJPROP_COLOR,clrDarkOrange);
+   ObjectSetInteger(0,"Trailing Stop Loss Buy",OBJPROP_WIDTH,1);
+   ObjectMove(StringToInteger(_Symbol),"Trailing Stop Loss Buy",0,0,Long_Price+long_distance);   
+}
+
+
+
+
+
+void TSL_Short()
+{  
+   if( darfTSLsetzen_short == true )
+   if( Ask < Short_Price - short_distance)
+   {
+      int i=PositionsTotal()-1;     
+      while (i>=0)
+      {
+         string symbol = PositionGetSymbol(i);
+         if(symbol == _Symbol)
+         {
+            ulong PositionTicket     = PositionGetInteger(POSITION_TICKET);
+            ulong PositionDirection  = PositionGetInteger(POSITION_TYPE);
+            double CurrentStopLoss   = PositionGetDouble(POSITION_SL);
+            double CurrentTakeProfit = PositionGetDouble(POSITION_TP);
+            double NewStop  = (Ask + TSL_Price_short);
+            
+            if( PositionGetInteger(POSITION_MAGIC) == MagicNumber )
+            if( NormalizeDouble(CurrentStopLoss,_Digits) > NormalizeDouble(NewStop,_Digits) )
+            if( PositionDirection == POSITION_TYPE_SELL )
+            //if( NormalizeDouble(NewStop,_Digits) < (Ask-(20*_Point)) )
+            {
+               
+               if(!trade.PositionModify(PositionTicket,NormalizeDouble(NewStop,_Digits),CurrentTakeProfit))
+               {
+                  // wenn der SL nicht verschoben werden konnte, weil der Market closed ist, dann brich aus der Funktion.
+                  if(trade.ResultRetcode() == TRADE_RETCODE_MARKET_CLOSED) return;
+                  
+                  if(ExpertsPrints == Yes)printf("Stop Loss didn't move. Error: "+IntegerToString(trade.ResultRetcode()));
+                  for(int x = 2; x < 10; x++)
+                  {
+                     double angepasster_NewStop = Ask + (x*TSL_Price_short);
+                     if(ExpertsPrints == Yes)Print("adjusted NewStop: ",angepasster_NewStop);
+                     if(trade.PositionModify(PositionTicket,NormalizeDouble(angepasster_NewStop,_Digits),CurrentTakeProfit)) {break;}
+                  }
+               } 
+               else
+               {
+                  if(ExpertsPrints == Yes)Print("The EA with Magic Number ", MagicNumber, " has moved the SL. Ask: ",Ask," Short Price: ", Short_Price-short_distance," NewStop: ",NewStop);
+               }
+            }
+         }       
+         i--;
+      }
+   } 
+}
+
+
+
+
+// Funktionsaufruf der SL-Linie
+void SL_Linie_Sell()
+{
+   ObjectCreate(StringToInteger(_Symbol),"Trailing Stop Loss Sell", OBJ_HLINE,0,0,Short_Price- short_distance);
+   ObjectSetInteger(0,"Trailing Stop Loss Sell",OBJPROP_COLOR,clrMagenta);
+   ObjectSetInteger(0,"Trailing Stop Loss Sell",OBJPROP_WIDTH,1);
+   ObjectMove(StringToInteger(_Symbol),"Trailing Stop Loss Sell",0,0,Short_Price- short_distance);   
+}
+
+
+
+
+void verlustrechner()
+{
+   if( OnTestFunction == Yes )
+   {
+      datetime mthstart=iTime(NULL,PERIOD_MN1,0);
+   
+      string test = TimeToString(mthstart,TIME_DATE);
+         
+      if(monat != test)
+      {
+         monat = test;
+         double equ_neu = AccountInfoDouble(ACCOUNT_EQUITY);
+         monatsgewinn =  equ_neu - equ_alt;
+         if(monatsgewinn > 0)
+         {
+            gewinnmonatscounter = gewinnmonatscounter + 1;
+         }
+   
+         equ_alt = AccountInfoDouble(ACCOUNT_EQUITY);
+      }
+   }
+}
+
+
+
+
+
+
+// Modul, um mehrere Trades je Kerze zu vermeiden (entweder ein Profit oder ein Loss, aber niemals mehrere)
+void SingleTrades()
+{
+   datetime dieseKerze = (datetime)SeriesInfoInteger(_Symbol,timeframe,SERIES_LASTBAR_DATE);
+
+   // wenn der EA geladen wird, dann ist in der aktuellen Kerze das Trading verboten:
+   if( letzteKerze != dieseKerze && letzteKerze == 0 )
+   {
+      letzteKerze = dieseKerze;
+      return;
+   }
+   
+   
+   // erst mit der nächsten Kerze wird das Trading erlaubt
+   if( letzteKerze != dieseKerze )
+   {
+      letzteKerze = dieseKerze;
+      TradesLong    = "Erlaubt";
+      TradesShort   = "Erlaubt";
+      
+      // das muss nach einem trade opening verboten werden 
+      // und muss vor trade opening geprüft werden auf erlaubt
+   }
+}
+
+
+
+
+
+void TimeCloser()
+{
+   if( DayClose > 0 )
+   {  
+      string uhrzeit                   = TimeToString(TimeCurrent(),TIME_MINUTES);
+      
+      // für Longs
+      if(LongAnzahl == 1)
+      {
+         int i=PositionsTotal()-1;     
+         while (i>=0)
+         {
+            string symbol = PositionGetSymbol(i);
+            if(symbol == _Symbol)
+            {
+               ulong PositionTicket       = PositionGetInteger(POSITION_TICKET);
+               ulong PositionDirection    = PositionGetInteger(POSITION_TYPE);
+               ulong PositionTime         = PositionGetInteger(POSITION_TIME);
+               if( PositionGetInteger(POSITION_MAGIC) == MagicNumber )
+               if( (WelcheRichtung == Buy && PositionDirection  == POSITION_TYPE_BUY)  ||  
+                   (WelcheRichtung == Buy_and_Sell && PositionDirection  == POSITION_TYPE_BUY) )
+               { 
+                  long Kerzencounter   = iBarShift(symbol,PERIOD_D1,PositionTime);
+   
+                  string uhrzeit_trade = TimeToString(PositionTime,TIME_MINUTES);
+                  
+                  if( Kerzencounter >= DayClose )
+                  if( uhrzeit >= uhrzeit_trade  )
+                  {
+                     trade.PositionClose(PositionTicket);
+                     PosiSL_long = 0;
+                     PosiTP_long = 0;
+                     GlobalVariableDel(_Symbol+" "+(string)MagicNumber+" MonoMA PosiSL_long");
+                     GlobalVariableDel(_Symbol+" "+(string)MagicNumber+" MonoMA PosiTP_long");
+                     long_schon_gehandelt = true;
+                     
+                     if(ExpertsPrints == Yes)Print("Buy-Position #" ,PositionTicket," was closed by Time Closer after ", DayClose," days.");
+                  }
+               } 
+            }       
+            i--;
+         }
+      }
+      
+      
+      // für Shorts
+      if(ShortAnzahl == 1)
+      {
+         int i=PositionsTotal()-1;     
+         while (i>=0)
+         {
+            string symbol = PositionGetSymbol(i);
+            if(symbol == _Symbol)
+            {
+               ulong PositionTicket       = PositionGetInteger(POSITION_TICKET);
+               ulong PositionDirection    = PositionGetInteger(POSITION_TYPE);
+               ulong PositionTime         = PositionGetInteger(POSITION_TIME);
+               if( PositionGetInteger(POSITION_MAGIC) == MagicNumber )
+               if( (WelcheRichtung == Sell && PositionDirection == POSITION_TYPE_SELL) ||
+                   (WelcheRichtung == Buy_and_Sell && PositionDirection == POSITION_TYPE_SELL) )
+               { 
+                  long Kerzencounter   = iBarShift(symbol,PERIOD_D1,PositionTime);
+   
+                  string uhrzeit_trade = TimeToString(PositionTime,TIME_MINUTES);
+                  
+                  if( Kerzencounter >= DayClose )
+                  if( uhrzeit >= uhrzeit_trade  )
+                  {
+                     trade.PositionClose(PositionTicket);
+                     PosiSL_short = 0;
+                     PosiTP_short = 0;
+                     GlobalVariableDel(_Symbol+" "+(string)MagicNumber+" MonoMA PosiSL_short");
+                     GlobalVariableDel(_Symbol+" "+(string)MagicNumber+" MonoMA PosiTP_short");
+                     short_schon_gehandelt = true;
+                     
+                     if(ExpertsPrints == Yes)Print("Sell-Position #" ,PositionTicket," was closed by Time Closer after ", DayClose," days.");
+                  }
+               } 
+            }       
+            i--;
+         }
+      }           
+   }
+}
+
+
+
+
+
+// Funktionsbeginn Berechnung des verlorenen TSLs
+bool lostTSL()
+{
+   TradeAnzahl();
+   
+   
+   Print("EA was loaded successfully. ",LongAnzahl," Longs and ",ShortAnzahl," Shorts have been counted.");
+   
+   
+   if(!lostTSL_long())  {return false;}
+   
+   if(!lostTSL_short()) {return false;}
+   
+   
+   return true;
+}
+
+
+
+
+
+bool lostTSL_long()
+{
+   // für Longs
+   if( LongAnzahl == 1 )
+   {      
+      GlobalVariableGet(_Symbol+" "+(string)MagicNumber+" MonoMA Buy Ask", Ask);
+      GlobalVariableGet(_Symbol+" "+(string)MagicNumber+" MonoMA Buy SL_distance", SL_distance_long);
+      
+      // Berechnung Distanz zwischen Opening Price und gelber Linie:
+      LP_Price_long = (SL_distance_long*stop*0.01) * LockProfit * 0.01;
+      
+      // Berechnung, mit wieviel Abstand der SL nachgezogen werden soll:
+      TSL_Price_long = (SL_distance_long*stop*0.01) * TSL * 0.01;
+      
+      // Berechnung, auf welchem Preis die gelbe Linie liegt:
+      Long_Price = LP_Price_long + Ask;
+      
+      Print(
+      "The following variables have been detected by the Lost-TSL-function (Magic Number: ",MagicNumber,") \n"
+      "Ask: ",Ask,
+      " SL_distance_long: ",SL_distance_long,
+      " LP_Price_long: ",LP_Price_long,
+      " TSL_Price_long: ",TSL_Price_long,
+      " Long_Price: ",Long_Price
+      );
+      
+      if(Long_Price == 0)
+      {
+         Alert("Could not load Trailing SL function, Positions would be closed because the SL cant be calculated correctly."); 
+         return false;
+      }
+      
+      TradesLong = "Verboten";
+      
+   }
+   
+   
+   // --------------------- SL TP Entfernungs-Part --------------------- //
+   if( LongAnzahl == 1)
+   {
+      if(!GlobalVariableGet(_Symbol+" "+(string)MagicNumber+" MonoMA PosiSL_long", PosiSL_long)) 
+      {
+         Alert("Could not load SL and TP altough there is an open position."); 
+         return false;
+      }
+      if(!GlobalVariableGet(_Symbol+" "+(string)MagicNumber+" MonoMA PosiTP_long", PosiTP_long))
+      {
+         Alert("Could not load SL and TP altough there is an open position."); 
+         return false;
+      }
+      
+      Print(
+      "PosiSL_long: ",PosiSL_long,
+      " PosiTP_long: ",PosiTP_long
+      );
+   }
+   
+   
+   
+   return true;
+}
+
+
+
+
+
+bool lostTSL_short()
+{
+   
+   // für Shorts
+   if( ShortAnzahl == 1 )
+   {
+      GlobalVariableGet(_Symbol+" "+(string)MagicNumber+" MonoMA Sell Bid", Bid);
+      GlobalVariableGet(_Symbol+" "+(string)MagicNumber+" MonoMA Sell SL_distance", SL_distance_short);
+      
+      // Berechnung Distanz zwischen Opening Price und lila Linie:
+      LP_Price_short = (SL_distance_short*stop*0.01) * LockProfit * 0.01;
+      
+      // Berechnung, mit wieviel Abstand der SL nachgezogen werden soll:
+      TSL_Price_short = (SL_distance_short*stop*0.01) * TSL * 0.01;
+      
+      // Berechnung, auf welchem Preis die lila  Linie liegt:
+      Short_Price = Bid - LP_Price_short;
+      
+      
+      Print(
+      "The following variables have been detected by the Lost-TSL-function (Magic Number: ",MagicNumber,") \n"
+      "Bid: ",Bid,
+      " SL_distance_short: ",SL_distance_short,
+      " LP_Price_short: ",LP_Price_short,
+      " TSL_Price_short: ",TSL_Price_short,
+      " Short_Price: ",Short_Price
+      );
+      
+      if(Short_Price == 0)
+      {
+         Alert("Could not load Trailing SL function, Positions would be closed because the SL cant be calculated correctly."); 
+         return false;
+      }
+      
+      TradesShort = "Verboten";      
+   }  
+   
+   // --------------------- SL TP Entfernungs-Part --------------------- //
+   if( ShortAnzahl == 1 )
+   {
+      if(!GlobalVariableGet(_Symbol+" "+(string)MagicNumber+" MonoMA PosiSL_short", PosiSL_short)) 
+      {
+         Alert("Could not load SL and TP altough there is an open position."); 
+         return false;
+      }
+      if(!GlobalVariableGet(_Symbol+" "+(string)MagicNumber+" MonoMA PosiTP_short", PosiTP_short))
+      {
+         Alert("Could not load SL and TP altough there is an open position."); 
+         return false;
+      }
+      
+      Print(
+      "PosiSL_short: ",PosiSL_short,
+      " PosiTP_short: ",PosiTP_short
+      );
+   }
+   
+   
+   return true;
+}
+
+
+
+
+
+
+
+
+bool DeleteGlobalVars()
+{
+   //TradeAnzahl();
+   
+   // wenn kein offener Long mehr exisitert, aber trotzdem noch die Variablen zu einer alten Posi, dann lösch die Variablen und gib das aus
+   if( LongAnzahl == 0 )
+   {
+      
+      if(GlobalVariableGet(_Symbol+" "+(string)MagicNumber+" MonoMA Buy Ask", Ask))
+      {
+         GlobalVariableDel(_Symbol+" "+(string)MagicNumber+" MonoMA Buy Ask");
+         if(ExpertsPrints == Yes)Print("Deleted global variable: ",_Symbol+" "+(string)MagicNumber+" MonoMA Buy Ask: ",Ask);
+      }
+      
+      if(GlobalVariableGet(_Symbol+" "+(string)MagicNumber+" MonoMA Buy SL_distance", SL_distance_long))
+      {
+         GlobalVariableDel(_Symbol+" "+(string)MagicNumber+" MonoMA Buy SL_distance");
+         if(ExpertsPrints == Yes)Print("Deleted global variable: ",_Symbol+" "+(string)MagicNumber+" MonoMA Buy SL_distance: ", SL_distance_long);
+      }    
+   }
+   
+   if( ShortAnzahl == 0 )
+   {
+         
+      if(GlobalVariableGet(_Symbol+" "+(string)MagicNumber+" MonoMA Sell Bid", Bid))
+      {
+         GlobalVariableDel(_Symbol+" "+(string)MagicNumber+" MonoMA Sell Bid");
+         if(ExpertsPrints == Yes)Print("Deleted global variable: ",_Symbol+" "+(string)MagicNumber+" MonoMA Sell Bid: ",Bid);
+      }
+      
+      if(GlobalVariableGet(_Symbol+" "+(string)MagicNumber+" MonoMA Sell SL_distance", SL_distance_short))
+      {
+         GlobalVariableDel(_Symbol+" "+(string)MagicNumber+" MonoMA Sell SL_distance");
+         if(ExpertsPrints == Yes)Print("Deleted global variable: ",_Symbol+" "+(string)MagicNumber+" MonoMA Sell SL_distance: ", SL_distance_short);
+      }
+   }
+   
+   return true;
+}
+
+
+
+
+
+
+
+// nur einen Trade je Tag erlauben
+bool oneTradePerDay()
+{
+   if( OneTrade == Yes )
+   {
+      datetime daystart = iTime(NULL,PERIOD_D1,0);
+   
+      // es muss der nächste Tag sein
+      if(daystart != dayzero)
+      {
+         dayzero = daystart;
+         
+         // es darf kein offener Trade vorhanden sein
+         // Vars zurücksetzen und Handel wieder erlauben
+         if(LongAnzahl  == 0) {long_schon_gehandelt    = false;}
+         if(ShortAnzahl == 0) {short_schon_gehandelt   = false;}
+      }
+   }
+   
+   // wenn die Funktion ausgeschaltet ist, erlaube mehrere Trades je Tag, aber trotzdem immer nur parallel einen
+   if( OneTrade == No )
+   {
+      if(LongAnzahl  == 0) {long_schon_gehandelt    = false;}
+      if(ShortAnzahl == 0) {short_schon_gehandelt   = false;}
+   }
+   
+   return true;
+}
+
+
+
+
+
+// SL und TP um bestimmte Zeit entfernen und wieder einsetzen,
+// wichtig für korrekte Backtest bei 1min open Price Data
+bool SLTPEntferner()
+{
+   // falls während der Entfernungszeit kein Tick kommen sollte, wird der SL TP nicht entfernt
+   // ich erweitere deshalb die Abfrage und sage:
+   // ist die aktuelle Uhrzeit größer gleich Entfernungszeit?
+   // und gleichzeitig auch größer als die Wieder-Einsetzungszeit?
+   // dann geh rein
+   if( TimeToString(TimeCurrent(),TIME_MINUTES) >= Entfernungszeit && TimeToString(TimeCurrent(),TIME_MINUTES) > Einsetzungszeit )
+   {
+      if( LongAnzahl == 1 ) 
+      if( PosiSL_long == 0 && PosiTP_long == 0 )
+      {
+         if(!SLTPEntferner_long()) {return false;}
+      }
+      
+      if( ShortAnzahl == 1 ) 
+      if( PosiSL_short == 0 && PosiTP_short == 0 )
+      {
+         if(!SLTPEntferner_short()) {return false;}
+      }
+   }
+   
+   // wenn es keinen Tick gibt genau zu der Uhrzeit, wenn der SL TP wieder eingesetzt werden soll
+   // dann geht er hier nicht rein
+   // er soll also prüfen, ob es diese Uhrzeit ODER später ist
+   // und gleichzeitig darf es aber noch nicht wieder die Entfernungszeit sein
+   if(TimeToString(TimeCurrent(),TIME_MINUTES) >= Einsetzungszeit && TimeToString(TimeCurrent(),TIME_MINUTES) < Entfernungszeit)
+   {
+      if( LongAnzahl == 1 ) 
+      if( PosiSL_long != 0 && PosiTP_long != 0 )
+      {
+         if(!SLTPSetzer_long()) {return false;}
+      }
+      
+      if( ShortAnzahl == 1 ) 
+      if( PosiSL_short != 0 && PosiTP_short != 0 )
+      {
+         if(!SLTPSetzer_short()) {return false;}
+      }
+      
+   }
+   
+   // wenn keine offenen Trades vorliegen, setz die Variablen zurück
+   // warum?
+   // weil es sonst sein kann, dass noch PosiSL und TP gespeichert sind von der Vor-Position
+   // und wenn dann ein Trade eröffnet wird und genau zu der Zeit auch der SL TP entfernt werden soll,
+   // dann nutzt er da die alten Daten
+   // hierdurch wird das verhindert:
+   //TradeAnzahl();
+   
+   if( LongAnzahl == 0 )
+   {
+      if(!SLTPResetter_long()) {return false;}
+   }
+   
+   if( ShortAnzahl == 0 )
+   {
+      if(!SLTPResetter_short()) {return false;}
+   }
+   
+
+      
+   return true;
+}
+
+
+
+
+
+bool SLTPEntferner_long()
+{
+   // hol dir SL und TP,
+   // und ersetze sie danach durch 0
+   // und springe dann raus
+   int i=PositionsTotal()-1;  
+      
+   while (i>=0)
+   {
+      string symbol = PositionGetSymbol(i);
+      if(symbol == _Symbol)
+      {
+         ulong PositionTicket       = PositionGetInteger(POSITION_TICKET);
+         ulong PositionDirection    = PositionGetInteger(POSITION_TYPE);
+         
+         if( PositionGetInteger(POSITION_MAGIC) == MagicNumber )
+         if( (WelcheRichtung == Buy && PositionDirection  == POSITION_TYPE_BUY)  ||  
+             (WelcheRichtung == Buy_and_Sell && PositionDirection == POSITION_TYPE_BUY) )
+         { 
+            PosiSL_long              = PositionGetDouble(POSITION_SL);
+            PosiTP_long              = PositionGetDouble(POSITION_TP); 
+            
+            // falls das Terminal neustartet, während der SL oder TP gerade entfernt wurde, sind diese Werte verloren
+            // deshalb speichere ich sie global ab
+            GlobalVariableSet(_Symbol+" "+(string)MagicNumber+" MonoMA PosiSL_long", PosiSL_long);
+            GlobalVariableSet(_Symbol+" "+(string)MagicNumber+" MonoMA PosiTP_long", PosiTP_long);
+            GlobalVariablesFlush();
+            if(ExpertsPrints == Yes)Print("Saved global variable: ",_Symbol+" "+(string)MagicNumber+" MonoMA PosiSL_long: ",PosiSL_long);
+            if(ExpertsPrints == Yes)Print("Saved global variable: ",_Symbol+" "+(string)MagicNumber+" MonoMA PosiTP_long: ",PosiTP_long);
+            
+            if(trade.PositionModify(PositionTicket,0,0))
+            {
+               if(ExpertsPrints == Yes)Print("Buy-Position #",PositionTicket," was modified to SL and TP = 0");
+               darfTSLsetzen_long = false;
+            }
+            else
+            {
+               if(ExpertsPrints == Yes)Print("Buy-Position #",PositionTicket," couldnt be modified. Error: "+IntegerToString(trade.ResultRetcode()));
+            }
+            
+            break;
+            
+         } 
+      }       
+      i--;
+      
+   }
+   
+   return true;
+}
+   
+   
+   
+   
+bool SLTPEntferner_short()
+{
+   // hol dir SL und TP,
+   // und ersetze sie danach durch 0
+   // und springe dann raus
+   int i=PositionsTotal()-1;  
+      
+   while (i>=0)
+   {
+      string symbol = PositionGetSymbol(i);
+      if(symbol == _Symbol)
+      {
+         ulong PositionTicket       = PositionGetInteger(POSITION_TICKET);
+         ulong PositionDirection    = PositionGetInteger(POSITION_TYPE);
+         
+         if( PositionGetInteger(POSITION_MAGIC) == MagicNumber )
+         if( (WelcheRichtung == Sell && PositionDirection  == POSITION_TYPE_SELL)  ||  
+             (WelcheRichtung == Buy_and_Sell && PositionDirection == POSITION_TYPE_SELL) )
+         { 
+            PosiSL_short             = PositionGetDouble(POSITION_SL);
+            PosiTP_short             = PositionGetDouble(POSITION_TP); 
+            
+            // falls das Terminal neustartet, während der SL oder TP gerade entfernt wurde, sind diese Werte verloren
+            // deshalb speichere ich sie global ab
+            GlobalVariableSet(_Symbol+" "+(string)MagicNumber+" MonoMA PosiSL_short", PosiSL_short);
+            GlobalVariableSet(_Symbol+" "+(string)MagicNumber+" MonoMA PosiTP_short", PosiTP_short);
+            GlobalVariablesFlush();
+            if(ExpertsPrints == Yes)Print("Saved global variable: ",_Symbol+" "+(string)MagicNumber+" MonoMA PosiSL_short: ",PosiSL_short);
+            if(ExpertsPrints == Yes)Print("Saved global variable: ",_Symbol+" "+(string)MagicNumber+" MonoMA PosiTP_short: ",PosiTP_short);
+            
+            if(trade.PositionModify(PositionTicket,0,0))
+            {
+               if(ExpertsPrints == Yes)Print("Sell-Position #",PositionTicket," was modified to SL and TP = 0");
+               darfTSLsetzen_short = false;
+            }
+            else
+            {
+               if(ExpertsPrints == Yes)Print("Sell-Position #",PositionTicket," couldnt be modified. Error: "+IntegerToString(trade.ResultRetcode()));
+            }
+            
+            break;
+            
+         } 
+      }       
+      i--;
+      
+   }
+   
+   return true;
+}      
+      
+
+
+
+bool SLTPSetzer_long()
+{
+   GlobalVariableGet(_Symbol+" "+(string)MagicNumber+" MonoMA PosiSL_long", PosiSL_long);
+   GlobalVariableGet(_Symbol+" "+(string)MagicNumber+" MonoMA PosiTP_long", PosiTP_long);
+   
+   if(ExpertsPrints == Yes)Print("Received global variable: ",_Symbol+" "+(string)MagicNumber+" MonoMA PosiSL_long: ",PosiSL_long);
+   if(ExpertsPrints == Yes)Print("Received global variable: ",_Symbol+" "+(string)MagicNumber+" MonoMA PosiTP_long: ",PosiTP_long);
+   
+   // setz SL und TP wieder ein
+   int i=PositionsTotal()-1;  
+      
+   while (i>=0)
+   {
+      string symbol = PositionGetSymbol(i);
+      if(symbol == _Symbol)
+      {
+         ulong PositionTicket       = PositionGetInteger(POSITION_TICKET);
+         ulong PositionDirection    = PositionGetInteger(POSITION_TYPE);
+         
+         if( PositionGetInteger(POSITION_MAGIC) == MagicNumber )
+         if( (WelcheRichtung == Buy && PositionDirection  == POSITION_TYPE_BUY)  ||  
+             (WelcheRichtung == Buy_and_Sell && PositionDirection == POSITION_TYPE_BUY)  )
+         { 
+            if(!trade.PositionModify(PositionTicket,PosiSL_long,PosiTP_long))
+            {
+               // kommt es hier zu einem Fehler, dann schließ die Position sofort
+               if(trade.ResultRetcode() == TRADE_RETCODE_INVALID_STOPS) 
+               {
+                  trade.PositionClose(PositionTicket);
+                  if(ExpertsPrints == Yes)Print("SL or TP was invalid. Buy-Position #",PositionTicket," closed.");
+               } 
+            }
+            else
+            {
+               if(ExpertsPrints == Yes)Print("Buy-Position #",PositionTicket," was modified to SL: ",PosiSL_long," and TP: ",PosiTP_long);
+            }
+            
+            darfTSLsetzen_long = true;
+            
+            PosiSL_long = 0;
+            PosiTP_long = 0;
+            GlobalVariableSet(_Symbol+" "+(string)MagicNumber+" MonoMA PosiSL_long", PosiSL_long);
+            GlobalVariableSet(_Symbol+" "+(string)MagicNumber+" MonoMA PosiTP_long", PosiTP_long);
+            if(ExpertsPrints == Yes)Print("Set global variable: ",_Symbol+" "+(string)MagicNumber+" MonoMA PosiSL_long to: ",PosiSL_long);
+            if(ExpertsPrints == Yes)Print("Set global variable: ",_Symbol+" "+(string)MagicNumber+" MonoMA PosiTP_long to: ",PosiTP_long);
+            break; 
+         } 
+      }       
+      i--;
+      
+   } 
+   
+   return true;
+}
+
+
+
+
+
+bool SLTPSetzer_short()
+{
+   GlobalVariableGet(_Symbol+" "+(string)MagicNumber+" MonoMA PosiSL_short", PosiSL_short);
+   GlobalVariableGet(_Symbol+" "+(string)MagicNumber+" MonoMA PosiTP_short", PosiTP_short);
+   
+   if(ExpertsPrints == Yes)Print("Received global variable: ",_Symbol+" "+(string)MagicNumber+" MonoMA PosiSL_short: ",PosiSL_short);
+   if(ExpertsPrints == Yes)Print("Received global variable: ",_Symbol+" "+(string)MagicNumber+" MonoMA PosiTP_short: ",PosiTP_short);
+   
+   // setz SL und TP wieder ein
+   int i=PositionsTotal()-1;  
+      
+   while (i>=0)
+   {
+      string symbol = PositionGetSymbol(i);
+      if(symbol == _Symbol)
+      {
+         ulong PositionTicket       = PositionGetInteger(POSITION_TICKET);
+         ulong PositionDirection    = PositionGetInteger(POSITION_TYPE);
+         
+         if( PositionGetInteger(POSITION_MAGIC) == MagicNumber )
+         if( (WelcheRichtung == Sell && PositionDirection  == POSITION_TYPE_SELL)  ||  
+             (WelcheRichtung == Buy_and_Sell && PositionDirection == POSITION_TYPE_SELL)  )
+         { 
+            if(!trade.PositionModify(PositionTicket,PosiSL_short,PosiTP_short))
+            {
+               // kommt es hier zu einem Fehler, dann schließ die Position sofort
+               if(trade.ResultRetcode() == TRADE_RETCODE_INVALID_STOPS) 
+               {
+                  trade.PositionClose(PositionTicket);
+                  if(ExpertsPrints == Yes)Print("SL or TP was invalid. Sell-Position #",PositionTicket," closed.");
+               } 
+            }
+            else
+            {
+               if(ExpertsPrints == Yes)Print("Sell-Position #",PositionTicket," was modified to SL: ",PosiSL_short," and TP: ",PosiTP_short);
+            }
+            
+            darfTSLsetzen_short = true;
+            
+            PosiSL_short = 0;
+            PosiTP_short = 0;
+            GlobalVariableSet(_Symbol+" "+(string)MagicNumber+" MonoMA PosiSL_short", PosiSL_short);
+            GlobalVariableSet(_Symbol+" "+(string)MagicNumber+" MonoMA PosiTP_short", PosiTP_short);
+            if(ExpertsPrints == Yes)Print("Set global variable: ",_Symbol+" "+(string)MagicNumber+" MonoMA PosiSL_short to: ",PosiSL_short);
+            if(ExpertsPrints == Yes)Print("Set global variable: ",_Symbol+" "+(string)MagicNumber+" MonoMA PosiTP_short to: ",PosiTP_short);
+            break; 
+         } 
+      }       
+      i--;
+      
+   } 
+   
+   return true;
+}
+
+
+
+bool SLTPResetter_long()
+{
+   PosiSL_long = 0;
+   PosiTP_long = 0;
+   
+   if(GlobalVariableGet(_Symbol+" "+(string)MagicNumber+" MonoMA PosiSL_long", PosiSL_long))
+   {
+      GlobalVariableDel(_Symbol+" "+(string)MagicNumber+" MonoMA PosiSL_long");
+      if(ExpertsPrints == Yes)Print("Deleted global variable: ",_Symbol+" "+(string)MagicNumber+" MonoMA PosiSL_long: ",PosiSL_long);
+   }
+   
+   if(GlobalVariableGet(_Symbol+" "+(string)MagicNumber+" MonoMA PosiTP_long", PosiTP_long))
+   {
+      GlobalVariableDel(_Symbol+" "+(string)MagicNumber+" MonoMA PosiTP_long");
+      if(ExpertsPrints == Yes)Print("Deleted global variable: ",_Symbol+" "+(string)MagicNumber+" MonoMA PosiTP_long: ",PosiTP_long);
+   }
+   
+   return true;
+}
+
+
+
+
+
+bool SLTPResetter_short()
+{
+   PosiSL_short = 0;
+   PosiTP_short = 0;
+   
+   if(GlobalVariableGet(_Symbol+" "+(string)MagicNumber+" MonoMA PosiSL_short", PosiSL_short))
+   {
+      GlobalVariableDel(_Symbol+" "+(string)MagicNumber+" MonoMA PosiSL_short");
+      if(ExpertsPrints == Yes)Print("Deleted global variable: ",_Symbol+" "+(string)MagicNumber+" MonoMA PosiSL_short: ",PosiSL_short);
+   }
+   
+   if(GlobalVariableGet(_Symbol+" "+(string)MagicNumber+" MonoMA PosiTP_short", PosiTP_short))
+   {
+      GlobalVariableDel(_Symbol+" "+(string)MagicNumber+" MonoMA PosiTP_short");
+      if(ExpertsPrints == Yes)Print("Deleted global variable: ",_Symbol+" "+(string)MagicNumber+" MonoMA PosiTP_short: ",PosiTP_short);
+   }
+   
+   return true;
+}
+
+
+
+
+
+
+
+// decide, when to remove SL and TP
+bool WhenToRemoveSLTP()
+{   
+   // remove SL and TP in backtests and live trading
+   if( SLTPRemove == in_both ) 
+   {
+      if( !SLTPEntferner() ) { return false; }
+   }
+   
+   // remove SL only during backtests
+   if( SLTPRemove == in_Backtests && MQLInfoInteger(MQL_TESTER) ) 
+   {
+      if( !SLTPEntferner() ) { return false; }
+   }
+   
+   // remove SL only in live trading
+   if( SLTPRemove == in_Live && !MQLInfoInteger(MQL_TESTER) ) 
+   {
+      if( !SLTPEntferner() ) { return false; }
+   }
+
+   return true;
+}
+
+
+
+// Handel nur zu bestimmten Monaten zulassen
+bool MonthFilter()
+{
+   // finde heraus, welchen Monat wir gerade haben
+   MqlDateTime tmp;
+   TimeToStruct(TimeTradeServer(),tmp);
+   int month = tmp.mon;
+   
+   
+   // setze die Variable zurück
+   MonatsHandelErlaubt = false;
+
+
+   // prüfe, ob der aktuelle Monat gehandelt werden darf
+   if( month == 1 && InpJanuary == true )
+   {
+      MonatsHandelErlaubt = true;
+      return true;
+   }
+   
+   
+   if( month == 2 && InpFebruary == true )
+   {
+      MonatsHandelErlaubt = true;
+      return true;
+   }
+
+   
+   if( month == 3 && InpMarch == true )
+   {
+      MonatsHandelErlaubt = true;
+      return true;
+   }
+
+   
+   if( month == 4 && InpApril == true )
+   {
+      MonatsHandelErlaubt = true;
+      return true;
+   }
+
+   
+   if( month == 5 && InpMay == true )
+   {
+      MonatsHandelErlaubt = true;
+      return true;
+   }
+
+   
+   if( month == 6 && InpJune == true )
+   {
+      MonatsHandelErlaubt = true;
+      return true;
+   }
+
+   
+   if( month == 7 && InpJuly == true )
+   {
+      MonatsHandelErlaubt = true;
+      return true;
+   }
+
+   
+   if( month == 8 && InpAugust == true )
+   {
+      MonatsHandelErlaubt = true;
+      return true;
+   }
+
+   
+   if( month == 9 && InpSeptember == true )
+   {
+      MonatsHandelErlaubt = true;
+      return true;
+   }
+
+   
+   if( month == 10 && InpOctober == true )
+   {
+      MonatsHandelErlaubt = true;
+      return true;
+   }
+
+   
+   if( month == 11 && InpNovember == true )
+   {
+      MonatsHandelErlaubt = true;
+      return true;
+   }
+
+   
+   if( month == 12 && InpDecember == true )
+   {
+      MonatsHandelErlaubt = true;
+      return true;
+   }
+
+   
+   return true;
+}
+
+
+
+/*
+bool VolaFilter()
+{
+   if(vola_period == 0) {VolaFilterErlaubtHandel = true;}
+   
+   // die Funktion nur ausführen, wenn Vola Filter auch aktiv sein soll, also nicht 0 ist
+   if(vola_period != 0)
+   {
+      // ATR Indikator wurde initialisiert und ermittelt hier den aktuellen Wert
+      ArraySetAsSeries(ATRPriceArray,true);
+      if(CopyBuffer(handleATR,0,0,3,ATRPriceArray) != 3) return false;
+      ATRValue = NormalizeDouble(ATRPriceArray[1],5);
+      
+      // ermittel den Body der letzten abgeschlossenen Kerze auf dem timeframe
+      if(CopyRates(_Symbol,vola_timeframe,0,3,VolaRates) != 3) return false;  
+      ArraySetAsSeries(VolaRates,true);   
+      Body = fabs(VolaRates[1].low - VolaRates[1].high);
+      
+      // wann darf gehandelt werden?
+      // na wenn die aktuelle Kerze kleiner ist als die ATR
+      // denn wenn die aktuelle Kerze zu groß wurde, dann heißt das, die vola stieg heftig, also geh raus
+      if(Body > ATRValue)
+      {
+         // Handel verboten
+         //Comment("Handel verboten");
+         VolaFilterErlaubtHandel = false;
+      }
+      else
+      {
+         // Handel erlaubt
+         //Comment("Handel erlaubt");
+         VolaFilterErlaubtHandel = true;
+      }
+   }
+
+   return true;
+}
+
+
+
+
+
+bool Trendfilter()
+{
+   // Signal resetten, wenn Filter inaktiv
+   if( trend_period == 0)
+   {
+      if( WelcheRichtung == Buy)  { ADX_Signal = "uptrend"; }
+      if( WelcheRichtung == Sell) { ADX_Signal = "downtrend"; }
+   }
+   
+
+   // Signal ermitteln, wenn Filter eingeschaltet:
+   if( trend_period != 0)
+   {
+      ADX_Signal = "";
+      
+      ArraySetAsSeries(ADXPriceArray,true);
+   
+      // ADX-Wert
+      CopyBuffer(handleADX,0,0,3,ADXPriceArray);
+      ADXValue0 = NormalizeDouble(ADXPriceArray[1],2);
+      
+      // +DI Wert
+      CopyBuffer(handleADX,1,0,3,ADXPriceArray);
+      ADXValue1 = NormalizeDouble(ADXPriceArray[1],2);
+      
+      // -DI Wert
+      CopyBuffer(handleADX,2,0,3,ADXPriceArray);
+      ADXValue2 = NormalizeDouble(ADXPriceArray[1],2);
+      
+      
+      // um überhaupt ein Signal zu generieren, muss der ADX-Wert über einem Schwellenwert sein:
+      if( ADXValue0 > ADX0_Limit)
+      {
+         // Bullish:
+         if( ADXValue1 > ADXValue2)
+         {
+            ADX_Signal = "uptrend";
+         }
+         
+         // Bearish:
+         if( ADXValue1 < ADXValue2)
+         {
+            ADX_Signal = "downtrend";
+         }
+      }
+   }
+   
+
+   return true;
+}
+*/
+
+
+void Swap_Calc()
+{
+   SwapCalcLong();
+   SwapCalcShort();
+}
+
+
+// hier führe ich die Funktion aus, die farbige SL-Linie aufgrund des Swaps zu verschieben
+// das macht deshalb Sinn, weil exotische Paare sehr teuer sind über Nacht
+// insgesamt will ich das oben in der OnTick aber nur eine Funktion ausgeführt wird
+// die dann hier long und short called
+double SwapCalcLong()
+{
+   double swap = 0;
+   double lots = 0;
+   double price = 0;
+   for(int i = PositionsTotal()-1; i>= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(PositionSelectByTicket(ticket))
+      {
+         double posOpenPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+         double posLots = PositionGetDouble(POSITION_VOLUME);
+         ulong type = PositionGetInteger(POSITION_TYPE);
+         double swapfee = PositionGetDouble(POSITION_SWAP);
+                  
+         if(type == POSITION_TYPE_BUY)
+         if(PositionGetString(POSITION_SYMBOL) == _Symbol)
+         if(PositionGetInteger(POSITION_MAGIC) == MagicNumber)
+         {
+            price -= posLots * posOpenPrice;
+            lots -= posLots;
+            swap = swap + swapfee;
+         }
+      }
+   }
+   
+   
+   // ---------------------- BEGINN: Verschiebung des BE-Points aufgrund des Swaps ------------------------------------ \\
+
+
+   double tickvalue = SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_VALUE);
+   double ticksize = SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_SIZE);
+   double lotstep = SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_STEP);
+   double riskTrade = swap;
+   double riskPerLotStep = riskTrade / lots * lotstep;
+   long_distance = ( (riskPerLotStep * ticksize) / (tickvalue * lotstep) );
+   
+   // ist die distance größer als 0, kostet der Swap Geld, die farbige SL Linie muss verschoben werden
+   // ist die distance kleiner als 0, also negativ, dann würde es Geld bringen, ich verschiebe die Linie dann nicht
+   if(long_distance < 0)
+   {
+      long_distance = 0;
+   }
+   
+   // er gibt hier die zusätzliche Pips-Entfernung aus
+   return long_distance;
+}
+
+
+
+double SwapCalcShort()
+{
+   double swap = 0;
+   double lots = 0;
+   double price = 0;
+   for(int i = PositionsTotal()-1; i>= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(PositionSelectByTicket(ticket))
+      {
+         double posOpenPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+         double posLots = PositionGetDouble(POSITION_VOLUME);
+         ulong type = PositionGetInteger(POSITION_TYPE);
+         double swapfee = PositionGetDouble(POSITION_SWAP);
+                  
+         if(type == POSITION_TYPE_SELL)
+         if(PositionGetString(POSITION_SYMBOL) == _Symbol)
+         if(PositionGetInteger(POSITION_MAGIC) == MagicNumber)
+         {
+            price -= posLots * posOpenPrice;
+            lots -= posLots;
+            swap = swap + swapfee;
+         }
+      }
+   }
+   
+   
+   // ---------------------- BEGINN: Verschiebung des BE-Points aufgrund des Swaps ------------------------------------ \\
+
+
+   double tickvalue = SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_VALUE);
+   double ticksize = SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_SIZE);
+   double lotstep = SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_STEP);
+   double riskTrade = swap;
+   double riskPerLotStep = riskTrade / lots * lotstep;
+   short_distance = ( (riskPerLotStep * ticksize) / (tickvalue * lotstep) ) *-1;
+   
+   
+   if(short_distance > 0)
+   {
+      short_distance = 0;
+   }
+   
+   // er gibt hier die zusätzliche Pips-Entfernung aus
+   return short_distance;
+}
+
+
+
+
+//+------------------------------------------------------------------+
+//|  Überprüft das Volumen der Order auf die Korrektheit             |
+//+------------------------------------------------------------------+
+bool CheckVolumeValue(double volume)
+{
+//--- minimal erlaubtes Volumen für die Handelsoperationen
+   double min_volume=SymbolInfoDouble(Symbol(),SYMBOL_VOLUME_MIN);
+   if(volume<min_volume)
+     {
+      if(ExpertsPrints == Yes)printf("Volume smaller than the minimum allowed.");
+      return(false);
+     }
+
+//--- maximal erlaubtes Volumen für die Handelsoperationen
+   double max_volume=SymbolInfoDouble(Symbol(),SYMBOL_VOLUME_MAX);
+   if(volume>max_volume)
+     {
+      if(ExpertsPrints == Yes)printf("Volume bigger than the maximum allowed.");
+      return(false);
+     }
+
+//--- wir bekommen die minimale Gradation des Volumens
+   double volume_step=SymbolInfoDouble(Symbol(),SYMBOL_VOLUME_STEP);
+
+   int ratio=(int)MathRound(volume/volume_step);
+   if(MathAbs(ratio*volume_step-volume)>0.0000001)
+     {
+      if(ExpertsPrints == Yes)printf("Volume in wrong format.");                         
+      return(false);
+     }
+
+   if(ExpertsPrints == Yes)printf("Volume correct.");
+   return(true);
+}
+
+
+
+
+
+// checks if all days and/or all months are false
+bool CheckMonthsDays()
+{
+   if( InpMonday == false && InpTuesday == false && InpWednesday ==  false && InpThursday == false && InpFriday== false )
+   {
+      Print("No weekdays for trading allowed");
+      return false;
+   }
+
+   if( InpJanuary == false && InpFebruary == false && InpMarch == false && InpApril == false && InpMay == false 
+      && InpJune == false && InpJuly == false && InpAugust == false && InpSeptember == false && InpOctober == false 
+      && InpNovember == false && InpDecember == false )
+      {
+         Print("No months for trading allowed");
+         return false;
+      }
+      
+   return true;
+}
