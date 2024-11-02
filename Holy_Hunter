@@ -1,0 +1,758 @@
+//+------------------------------------------------------------------+
+//|                                                  HolyScalper.mq5 |
+//|                                  Copyright 2021, MetaQuotes Ltd. |
+//|                                             https://www.mql5.com |
+//+------------------------------------------------------------------+
+#property copyright "Click here to enter our discord-server"
+#property link      "https://discord.gg/e2jM2Jztra"
+#property version   "1.10"
+#property description "\n\nThe measure of wisdom is, how calm you are when facing any given situation."
+
+
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
+int OnInit()
+  {
+      Comment(""); 
+      Print("Bot loaded successfully.");
+      return(INIT_SUCCEEDED);  
+  }
+//+------------------------------------------------------------------+
+//| Expert deinitialization function                                 |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+  {
+   Comment("");
+
+   ObjectDelete(ChartID(),"Rechteck");
+   ObjectDelete(ChartID(),"Zeile0");
+   ObjectDelete(ChartID(),"Zeile1");
+   ObjectDelete(ChartID(),"Zeile2");
+   ObjectDelete(ChartID(),"Zeile3");
+   ObjectDelete(ChartID(),"Zeile4");
+   ObjectDelete(ChartID(),"Zeile5");
+   ObjectDelete(ChartID(),"Zeile6");
+  }
+  
+  
+// um traden zu können, muss diese Bibliothek enthalten sein:
+#include <Trade\Trade.mqh>
+
+// eine neue Instanz von CTrade erstellen mit dem Namen trade
+CTrade trade; 
+  
+// Liste erstellen für Timeframes
+enum TimeFrameListe
+{
+   M1,
+   M2,
+   M3,
+   M4,
+   M5,
+   M6,
+   M10,
+   M12,
+   M15,
+   M20,
+   M30,
+   H1,
+   H2,
+   H3,
+   H4,
+   H6 
+};  
+
+// Liste erstellen für Yes and No
+enum Liste
+{
+   Yes,
+   No,
+};
+  
+// globale Variable für Ask und Bid anlegen, damit ich sie in anderen als der Hauptfunktion nutzen kann
+double Ask, Bid;
+
+// Variable für EMA anlegen
+int GDDefinition = 0;
+int GDDefinition2 = 0;
+
+// Variable für Stochastic anlegen:
+int StochasticDefinition = 0;
+
+// Variable anlegen für ATR
+int ATRDefinition = 0;
+
+//Array für EMA anlegen
+double MeinGD[];
+double MeinGD2[];
+
+// Variable für ATR anlegen
+double ATRWert = 0;
+
+// leere Variablen für SLPoints und Lotgroesse erstellen, benötigt zur Lotgroessenberechnung
+double SLPoints;
+
+//  Variable für nur einen profitablen Trade pro Kerze oder nicht:
+string weitereTradesLong = "Erlaubt";
+string weitereTradesShort = "Erlaubt";
+
+// Settings 
+input group "Settings" 
+input double Risiko_in_Prozent = 0.1;        // Risk per trade in %
+input int EMA_Value = 2;                     // fast Exponential Moving Average
+input int EMA_Value_slow = 35;               // slow Exponential Moving Average
+input int Stoch_K_Wert = 6;                  // Stochastic K-Value (Standard: 5)
+input int Stoch_K_Delay = 5;                 // Stochastic Delay-Value (Standard: 3)
+input int Stoch_Upper_Border = 90;           // Stochastic Upper Border (Standard 80)
+/* input */ int ATR_Period = 14;             // ATR period (Standard: 14)
+input int Asymmetric_Faktor = 4;             // Asymmetric Compounding Faktor (1 = off)
+input ulong Magic_Number = 1966;             // Magic Number 
+
+
+input TimeFrameListe TimeFrame = M15;         // Timeframe for indicators  
+input Liste Toolbox = Yes;                   // Show Tool-Box
+
+int Stoch_Lower_Border = 100 - Stoch_Upper_Border;
+
+// Variable für den Faktor beim Asymmetric Compounding erstellen
+int Faktor = 1;
+
+// leere Stringvariable erstellen für das Stochastic-Signal
+string StochasticSignal = "";
+
+
+input group "Zielfaktoren"
+input double meinTPFaktor = 6;             // Take Profit Factor
+input double meinSLFaktor = 1;             // Stop Loss Factor
+  
+  
+  
+  
+  
+  
+  
+//+------------------------------------------------------------------+
+//| Expert tick function                                             |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   // Aufruf Bid und Ask
+   BidAsk();
+   
+   // Aufruf EMA-Modul
+   EMA();
+   
+   // Aufruf Stochastic-Modul
+   Stochastic();
+   
+   // Aufruf AC-Modul
+   Asymmetric_Compounding();
+   
+   // Aufruf ATR-Modul
+   ATR_Berechnung();
+   
+   // Aufruf LotgroessenBerechnung-Modul 
+   if(ATRWert > 0) LotgroessenBerechnung();
+   
+   // Aufruf Buy-Position-Modul
+   Buy_Opening();
+   
+   // Aufruf Sell-Position-Modul
+   Sell_Opening();
+   
+   // Aufruf Eckdaten-Modul
+   Eckdaten();
+   
+   // Aufruf MultipleTrades-Modul
+   MultipleTrades();
+   
+   // Aufruf Toolbox-Modul
+   if(Toolbox == Yes) Chartausgabe();
+   
+}
+
+
+
+
+
+
+// Funktionsbeginn Bid und ASk
+void BidAsk()
+{
+   // Bidpreis holen
+   Bid = NormalizeDouble(SymbolInfoDouble(_Symbol,SYMBOL_BID),_Digits);
+   
+   // Askpreis holen
+   Ask = NormalizeDouble(SymbolInfoDouble(_Symbol,SYMBOL_ASK),_Digits);
+}
+
+
+
+
+// Funktionsbeginn EMA
+string EMA()
+{
+   // leere Stringvariable erstellen für das Signal
+   string Signal = "";          
+   
+   // Welches Timeframe
+   if(TimeFrame == M1)GDDefinition = iMA(_Symbol,PERIOD_M1,EMA_Value,0,MODE_EMA,PRICE_CLOSE);
+   if(TimeFrame == M2)GDDefinition = iMA(_Symbol,PERIOD_M2,EMA_Value,0,MODE_EMA,PRICE_CLOSE);
+   if(TimeFrame == M3)GDDefinition = iMA(_Symbol,PERIOD_M3,EMA_Value,0,MODE_EMA,PRICE_CLOSE);
+   if(TimeFrame == M4)GDDefinition = iMA(_Symbol,PERIOD_M4,EMA_Value,0,MODE_EMA,PRICE_CLOSE); 
+   if(TimeFrame == M5)GDDefinition = iMA(_Symbol,PERIOD_M5,EMA_Value,0,MODE_EMA,PRICE_CLOSE);  
+   if(TimeFrame == M6)GDDefinition = iMA(_Symbol,PERIOD_M6,EMA_Value,0,MODE_EMA,PRICE_CLOSE);
+   if(TimeFrame == M10)GDDefinition = iMA(_Symbol,PERIOD_M10,EMA_Value,0,MODE_EMA,PRICE_CLOSE);
+   if(TimeFrame == M12)GDDefinition = iMA(_Symbol,PERIOD_M12,EMA_Value,0,MODE_EMA,PRICE_CLOSE);
+   if(TimeFrame == M15)GDDefinition = iMA(_Symbol,PERIOD_M15,EMA_Value,0,MODE_EMA,PRICE_CLOSE); 
+   if(TimeFrame == M20)GDDefinition = iMA(_Symbol,PERIOD_M20,EMA_Value,0,MODE_EMA,PRICE_CLOSE); 
+   if(TimeFrame == M30)GDDefinition = iMA(_Symbol,PERIOD_M30,EMA_Value,0,MODE_EMA,PRICE_CLOSE);
+   if(TimeFrame == H1)GDDefinition = iMA(_Symbol,PERIOD_H1,EMA_Value,0,MODE_EMA,PRICE_CLOSE);
+   if(TimeFrame == H2)GDDefinition = iMA(_Symbol,PERIOD_H2,EMA_Value,0,MODE_EMA,PRICE_CLOSE);
+   if(TimeFrame == H3)GDDefinition = iMA(_Symbol,PERIOD_H3,EMA_Value,0,MODE_EMA,PRICE_CLOSE); 
+   if(TimeFrame == H4)GDDefinition = iMA(_Symbol,PERIOD_H4,EMA_Value,0,MODE_EMA,PRICE_CLOSE); 
+   if(TimeFrame == H6)GDDefinition = iMA(_Symbol,PERIOD_H6,EMA_Value,0,MODE_EMA,PRICE_CLOSE); 
+   
+   
+   // Welches Timeframe
+   if(TimeFrame == M1)GDDefinition2 = iMA(_Symbol,PERIOD_M1,EMA_Value_slow,0,MODE_EMA,PRICE_CLOSE);
+   if(TimeFrame == M2)GDDefinition2 = iMA(_Symbol,PERIOD_M2,EMA_Value_slow,0,MODE_EMA,PRICE_CLOSE);
+   if(TimeFrame == M3)GDDefinition2 = iMA(_Symbol,PERIOD_M3,EMA_Value_slow,0,MODE_EMA,PRICE_CLOSE);
+   if(TimeFrame == M4)GDDefinition2 = iMA(_Symbol,PERIOD_M4,EMA_Value_slow,0,MODE_EMA,PRICE_CLOSE); 
+   if(TimeFrame == M5)GDDefinition2 = iMA(_Symbol,PERIOD_M5,EMA_Value_slow,0,MODE_EMA,PRICE_CLOSE); 
+   if(TimeFrame == M6)GDDefinition2 = iMA(_Symbol,PERIOD_M6,EMA_Value_slow,0,MODE_EMA,PRICE_CLOSE);
+   if(TimeFrame == M10)GDDefinition2 = iMA(_Symbol,PERIOD_M10,EMA_Value_slow,0,MODE_EMA,PRICE_CLOSE);
+   if(TimeFrame == M12)GDDefinition2 = iMA(_Symbol,PERIOD_M12,EMA_Value_slow,0,MODE_EMA,PRICE_CLOSE);
+   if(TimeFrame == M15)GDDefinition2 = iMA(_Symbol,PERIOD_M15,EMA_Value_slow,0,MODE_EMA,PRICE_CLOSE); 
+   if(TimeFrame == M20)GDDefinition2 = iMA(_Symbol,PERIOD_M20,EMA_Value_slow,0,MODE_EMA,PRICE_CLOSE); 
+   if(TimeFrame == M30)GDDefinition2 = iMA(_Symbol,PERIOD_M30,EMA_Value_slow,0,MODE_EMA,PRICE_CLOSE);
+   if(TimeFrame == H1)GDDefinition2 = iMA(_Symbol,PERIOD_H1,EMA_Value_slow,0,MODE_EMA,PRICE_CLOSE);
+   if(TimeFrame == H2)GDDefinition2 = iMA(_Symbol,PERIOD_H2,EMA_Value_slow,0,MODE_EMA,PRICE_CLOSE);
+   if(TimeFrame == H3)GDDefinition2 = iMA(_Symbol,PERIOD_H3,EMA_Value_slow,0,MODE_EMA,PRICE_CLOSE); 
+   if(TimeFrame == H4)GDDefinition2 = iMA(_Symbol,PERIOD_H4,EMA_Value_slow,0,MODE_EMA,PRICE_CLOSE); 
+   if(TimeFrame == H6)GDDefinition2 = iMA(_Symbol,PERIOD_H6,EMA_Value_slow,0,MODE_EMA,PRICE_CLOSE); 
+              
+   
+   // Sortiere Preisdaten für GDs abwärts
+   ArraySetAsSeries(MeinGD, true); 
+   ArraySetAsSeries(MeinGD2, true);                                 
+   
+   // Fülle die Arrays mit Preisdaten
+   CopyBuffer(GDDefinition,0,0,3,MeinGD);  
+   CopyBuffer(GDDefinition2,0,0,3,MeinGD2);   
+   
+   
+   // für Longs:
+   // der schnelle EMA muss über dem langsamen EMA sein:
+   if( MeinGD[1] > MeinGD2[1] )
+   // Preis muss unter dem schnellen EMA sein:
+   if( Ask < MeinGD[1] )
+   {
+      Signal = "Kaufen";
+   }
+   
+   
+   // für Shorts:
+   if( MeinGD[1] < MeinGD2[1] )
+   if( Bid > MeinGD[1] )
+   {
+      Signal = "Verkaufen";
+   } 
+           
+   return Signal;                         
+}
+
+
+
+// Funktionsbeginn Stochastic
+string Stochastic()
+{
+   
+   
+   static datetime LastBar2 = 0;
+   datetime ThisBar2 = 0;
+   
+   // definiere Stochastic
+   // Welches Timeframe
+   if(TimeFrame == M1)
+   {
+      StochasticDefinition = iStochastic(_Symbol,PERIOD_M1,Stoch_K_Wert,Stoch_K_Wert,Stoch_K_Delay,MODE_SMA,STO_LOWHIGH);
+      ThisBar2 = (datetime)SeriesInfoInteger(_Symbol,PERIOD_M1,SERIES_LASTBAR_DATE);
+   }
+   
+   if(TimeFrame == M2)
+   {
+      StochasticDefinition = iStochastic(_Symbol,PERIOD_M2,Stoch_K_Wert,Stoch_K_Wert,Stoch_K_Delay,MODE_SMA,STO_LOWHIGH);
+      ThisBar2 = (datetime)SeriesInfoInteger(_Symbol,PERIOD_M2,SERIES_LASTBAR_DATE);
+   }
+   
+   if(TimeFrame == M3)
+   {
+      StochasticDefinition = iStochastic(_Symbol,PERIOD_M3,Stoch_K_Wert,Stoch_K_Wert,Stoch_K_Delay,MODE_SMA,STO_LOWHIGH);
+      ThisBar2 = (datetime)SeriesInfoInteger(_Symbol,PERIOD_M3,SERIES_LASTBAR_DATE);
+   }
+   
+   if(TimeFrame == M4)
+   {
+      StochasticDefinition = iStochastic(_Symbol,PERIOD_M4,Stoch_K_Wert,Stoch_K_Wert,Stoch_K_Delay,MODE_SMA,STO_LOWHIGH);
+      ThisBar2 = (datetime)SeriesInfoInteger(_Symbol,PERIOD_M4,SERIES_LASTBAR_DATE);
+   }
+   
+   if(TimeFrame == M5)
+   {
+      StochasticDefinition = iStochastic(_Symbol,PERIOD_M5,Stoch_K_Wert,Stoch_K_Wert,Stoch_K_Delay,MODE_SMA,STO_LOWHIGH);
+      ThisBar2 = (datetime)SeriesInfoInteger(_Symbol,PERIOD_M5,SERIES_LASTBAR_DATE);
+   }
+   
+   if(TimeFrame == M6)
+   {
+      StochasticDefinition = iStochastic(_Symbol,PERIOD_M6,Stoch_K_Wert,Stoch_K_Wert,Stoch_K_Delay,MODE_SMA,STO_LOWHIGH);
+      ThisBar2 = (datetime)SeriesInfoInteger(_Symbol,PERIOD_M6,SERIES_LASTBAR_DATE);
+   }
+   
+   if(TimeFrame == M10)
+   {
+      StochasticDefinition = iStochastic(_Symbol,PERIOD_M10,Stoch_K_Wert,Stoch_K_Wert,Stoch_K_Delay,MODE_SMA,STO_LOWHIGH);
+      ThisBar2 = (datetime)SeriesInfoInteger(_Symbol,PERIOD_M10,SERIES_LASTBAR_DATE);
+   }
+   
+   if(TimeFrame == M12)
+   {
+      StochasticDefinition = iStochastic(_Symbol,PERIOD_M12,Stoch_K_Wert,Stoch_K_Wert,Stoch_K_Delay,MODE_SMA,STO_LOWHIGH);
+      ThisBar2 = (datetime)SeriesInfoInteger(_Symbol,PERIOD_M12,SERIES_LASTBAR_DATE);
+   }
+   
+   if(TimeFrame == M15)
+   {
+      StochasticDefinition = iStochastic(_Symbol,PERIOD_M15,Stoch_K_Wert,Stoch_K_Wert,Stoch_K_Delay,MODE_SMA,STO_LOWHIGH);
+      ThisBar2 = (datetime)SeriesInfoInteger(_Symbol,PERIOD_M15,SERIES_LASTBAR_DATE);
+   }
+   
+   if(TimeFrame == M20)
+   {
+      StochasticDefinition = iStochastic(_Symbol,PERIOD_M20,Stoch_K_Wert,Stoch_K_Wert,Stoch_K_Delay,MODE_SMA,STO_LOWHIGH);
+      ThisBar2 = (datetime)SeriesInfoInteger(_Symbol,PERIOD_M20,SERIES_LASTBAR_DATE);
+   }
+   
+   if(TimeFrame == M30)
+   {
+      StochasticDefinition = iStochastic(_Symbol,PERIOD_M30,Stoch_K_Wert,Stoch_K_Wert,Stoch_K_Delay,MODE_SMA,STO_LOWHIGH);
+      ThisBar2 = (datetime)SeriesInfoInteger(_Symbol,PERIOD_M30,SERIES_LASTBAR_DATE);
+   }
+   
+   if(TimeFrame == H1)
+   {
+      StochasticDefinition = iStochastic(_Symbol,PERIOD_H1,Stoch_K_Wert,Stoch_K_Wert,Stoch_K_Delay,MODE_SMA,STO_LOWHIGH);
+      ThisBar2 = (datetime)SeriesInfoInteger(_Symbol,PERIOD_H1,SERIES_LASTBAR_DATE);
+   }
+   
+   if(TimeFrame == H2)
+   {
+      StochasticDefinition = iStochastic(_Symbol,PERIOD_H2,Stoch_K_Wert,Stoch_K_Wert,Stoch_K_Delay,MODE_SMA,STO_LOWHIGH);
+      ThisBar2 = (datetime)SeriesInfoInteger(_Symbol,PERIOD_H2,SERIES_LASTBAR_DATE);
+   }
+   
+   if(TimeFrame == H3)
+   {
+      StochasticDefinition = iStochastic(_Symbol,PERIOD_H3,Stoch_K_Wert,Stoch_K_Wert,Stoch_K_Delay,MODE_SMA,STO_LOWHIGH);
+      ThisBar2 = (datetime)SeriesInfoInteger(_Symbol,PERIOD_H3,SERIES_LASTBAR_DATE);
+   }
+   
+   if(TimeFrame == H4)
+   {
+      StochasticDefinition = iStochastic(_Symbol,PERIOD_H4,Stoch_K_Wert,Stoch_K_Wert,Stoch_K_Delay,MODE_SMA,STO_LOWHIGH);
+      ThisBar2 = (datetime)SeriesInfoInteger(_Symbol,PERIOD_H4,SERIES_LASTBAR_DATE);
+   }
+   
+   if(TimeFrame == H6)
+   {
+      StochasticDefinition = iStochastic(_Symbol,PERIOD_H6,Stoch_K_Wert,Stoch_K_Wert,Stoch_K_Delay,MODE_SMA,STO_LOWHIGH);
+      ThisBar2 = (datetime)SeriesInfoInteger(_Symbol,PERIOD_H6,SERIES_LASTBAR_DATE);
+   }
+   
+
+
+   // wir erstellen  ein Array für die K-Linie
+   double KArray[];
+   
+   // Array sortieren
+   ArraySetAsSeries(KArray,true);
+
+   // das  Array mit Daten füllen
+   CopyBuffer(StochasticDefinition,0,0,3,KArray);
+   
+   
+   //StochasticSignal = "";
+   
+
+   //-------- auf neue Kerze prüfen ------------
+      string IsNewCandle = "no";
+      
+      if(LastBar2 != ThisBar2)
+      {
+         //printf("New bar: %s",TimeToString(ThisBar));
+         LastBar2 = ThisBar2;
+         IsNewCandle = "yes"; 
+      }
+      
+      if( IsNewCandle == "yes")
+      {       
+         if( (KArray[2] < Stoch_Lower_Border) && (KArray[1] > Stoch_Lower_Border) ) StochasticSignal = "Kaufen";
+      
+         if( (KArray[2] > Stoch_Upper_Border) && (KArray[1] < Stoch_Upper_Border) ) StochasticSignal = "Verkaufen";
+         
+         if( (KArray[2] < Stoch_Lower_Border) && (KArray[1] < Stoch_Lower_Border) ) StochasticSignal = "";
+         
+         if( (KArray[2] > Stoch_Upper_Border) && (KArray[1] > Stoch_Upper_Border) ) StochasticSignal = "";
+         
+         if( (KArray[2] > Stoch_Lower_Border) && (KArray[2] < Stoch_Upper_Border) && (KArray[1] > Stoch_Lower_Border) && (KArray[1] < Stoch_Upper_Border) ) StochasticSignal = "";
+      }
+   
+   return StochasticSignal; 
+}
+
+
+
+
+
+// Funktionsbeginn für Asymmetric Compounding
+double Asymmetric_Compounding()
+{
+   // hole dir die Orderhistorie vom Zeitpunkt Null bis heute
+   HistorySelect(0,TimeCurrent());
+   
+   // hole dir den Profit / Verlust der letzten geschlossenen Order
+   double Profit_1 = HistoryDealGetDouble(HistoryDealGetTicket(HistoryDealsTotal()-1),DEAL_PROFIT);
+   
+   // hole dir den Profit / Verlust der vorletzten geschlossenen Order
+   double Profit_2 = HistoryDealGetDouble(HistoryDealGetTicket(HistoryDealsTotal()-3),DEAL_PROFIT);
+   
+   
+   
+   // wenn der letzte Trade einen Verlust ergab
+   // oder noch kein Trade gemacht wurde, 
+   // das filtere ich dadurch, indem ich prüfe, ob der erste "Profit" so groß wie die Accountbalance war, also die Einzahlung ist
+   // dann setze den Faktor auf 1
+   if((Profit_1 < 0) || (Profit_1 == AccountInfoDouble(ACCOUNT_BALANCE)))
+   {
+      Faktor = 1;
+   }
+   
+   // wenn der letzte Trade mit Profit endete
+   if(Profit_1 > 0)
+   {
+      // und der vorletzte Trade auch im Profit endete
+      if(Profit_2 > 0)
+      {
+         // dann schalte AC aus, also Faktor = 1
+         Faktor = 1;
+      }
+      
+      // wenn der vorletzte Trade aber im Verlust endete
+      if(Profit_2 < 0)
+      {
+         // prüfe, ob der letzte Deal ein Long oder Short ist, wenn ja, dann gehe zur AC-Prüfung
+         // Wenn nein, dann war es kein Trade sondern z. B. eine Einzahlung
+         ulong type = HistoryDealGetInteger(HistoryDealGetTicket(HistoryDealsTotal()-1),DEAL_TYPE);
+         if( (type == DEAL_TYPE_BUY) || (type == DEAL_TYPE_SELL) )
+         {
+            // wenn alles passt
+            // dann schalte AC ein, also Faktor = AC-Faktor
+            Faktor = Asymmetric_Faktor;
+         }
+         
+      }
+   }
+
+   // gib den Faktor an die Hauptfunktion zurück
+   return Faktor;
+}
+
+
+
+// Funktionsbeginn ATR-Berechnung
+double ATR_Berechnung()
+{
+   // ATR-Wert berechnen
+   double Preisarray[];
+   
+   // Welches Timeframe
+   if(TimeFrame == M1)ATRDefinition = iATR(_Symbol, PERIOD_M1,ATR_Period); // für 14 Kerzen
+   if(TimeFrame == M2)ATRDefinition = iATR(_Symbol, PERIOD_M2,ATR_Period);
+   if(TimeFrame == M3)ATRDefinition = iATR(_Symbol, PERIOD_M3,ATR_Period);
+   if(TimeFrame == M4)ATRDefinition = iATR(_Symbol, PERIOD_M4,ATR_Period);
+   if(TimeFrame == M5)ATRDefinition = iATR(_Symbol, PERIOD_M5,ATR_Period); 
+   if(TimeFrame == M6)ATRDefinition = iATR(_Symbol, PERIOD_M6,ATR_Period);
+   if(TimeFrame == M10)ATRDefinition = iATR(_Symbol, PERIOD_M10,ATR_Period);
+   if(TimeFrame == M12)ATRDefinition = iATR(_Symbol, PERIOD_M12,ATR_Period);
+   if(TimeFrame == M15)ATRDefinition = iATR(_Symbol, PERIOD_M15,ATR_Period); 
+   if(TimeFrame == M20)ATRDefinition = iATR(_Symbol, PERIOD_M20,ATR_Period);
+   if(TimeFrame == M30)ATRDefinition = iATR(_Symbol, PERIOD_M30,ATR_Period);
+   if(TimeFrame == H1)ATRDefinition = iATR(_Symbol, PERIOD_H1,ATR_Period);
+   if(TimeFrame == H2)ATRDefinition = iATR(_Symbol, PERIOD_H2,ATR_Period); 
+   if(TimeFrame == H3)ATRDefinition = iATR(_Symbol, PERIOD_H3,ATR_Period);
+   if(TimeFrame == H4)ATRDefinition = iATR(_Symbol, PERIOD_H4,ATR_Period);
+   if(TimeFrame == H6)ATRDefinition = iATR(_Symbol, PERIOD_H6,ATR_Period);
+ 
+   
+   ArraySetAsSeries(Preisarray,true);
+   CopyBuffer(ATRDefinition,0,0,3,Preisarray);
+   ATRWert = NormalizeDouble(Preisarray[0],7);
+   return ATRWert;
+}
+
+
+
+
+
+// Funktionsbeginn LotgroessenBerechnung
+double LotgroessenBerechnung()
+{  
+   // Variable anlegen, die meinen SL berechnet
+   SLPoints = Ask - (Ask - (ATRWert*meinSLFaktor));
+
+   /*Equity ermitteln*/
+   double Equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   
+   // Variable erstellen, die das Geldrisiko des Trades bestimmt
+   // also z. B. 10.000 € * 1.0 / 100 = 100 €
+   double riskTrade = Equity * Risiko_in_Prozent / 100;
+   
+   // Variable erstellen für kleinstmögliche Preisschwankung im Chart
+   // also der Geldbetrag pro Tick
+   double tickvalue = SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_VALUE);
+   
+   // Variable erstellen für die Ticksize
+   // die Ticksize entspricht nicht immer dem Tickvalue
+   // die Ticksize kann manchmal in 0.2er Schritten gehen, wobei der Tickvalue dann sozusagen schon x2 zählt
+   double ticksize = SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_SIZE);
+   
+   // Variable erstellen für kleinstmögliche Lotveränderung
+   double lotstep = SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_STEP);
+   
+   // Variable erstellen für Geldrisiko pro einem Lotstep, also 0.01er Schritte
+   double riskPerLotStep = SLPoints / ticksize * tickvalue * lotstep;
+   
+   // Berechnung der notwendigen Lotsize für einen Trade
+   double lots = riskTrade / riskPerLotStep * lotstep;
+   
+   // Lot-Size an die Hauptfunktion zurückgeben 
+   return lots;
+}
+
+
+
+
+// Funktionsbeginn Buy Opening
+void Buy_Opening()
+{
+   double volume_step=SymbolInfoDouble(Symbol(),SYMBOL_VOLUME_STEP);
+   int ratio=(int)MathRound(NormalizeDouble(Faktor * LotgroessenBerechnung(),2)/volume_step);
+
+   if( (ATRWert*meinSLFaktor) >  SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL) )
+   
+   
+   if(!MathAbs(ratio*volume_step-NormalizeDouble(Faktor * LotgroessenBerechnung(),2)) > 0.0000001)
+   if( NormalizeDouble(Faktor * LotgroessenBerechnung(),2) > SymbolInfoDouble(Symbol(),SYMBOL_VOLUME_MIN))
+   if( NormalizeDouble(Faktor * LotgroessenBerechnung(),2) < SymbolInfoDouble(Symbol(),SYMBOL_VOLUME_MAX))
+   if( PositionsTotal() < 1 )
+   if( EMA() == "Kaufen" )
+   if( Stochastic() == "Kaufen" )
+   if( weitereTradesLong == "Erlaubt" )
+   {
+      trade.Buy(NormalizeDouble(Faktor * LotgroessenBerechnung(),2),_Symbol,Ask,Ask-ATRWert*meinSLFaktor,Ask+ATRWert*meinTPFaktor,NULL);
+      weitereTradesLong = "Verboten";
+      StochasticSignal = "";
+   }
+   
+}
+
+
+
+
+// Funktionsbeginn Sell Opening
+void Sell_Opening()
+{
+   double volume_step=SymbolInfoDouble(Symbol(),SYMBOL_VOLUME_STEP);
+   int ratio=(int)MathRound(NormalizeDouble(Faktor * LotgroessenBerechnung(),2)/volume_step);
+
+   if( (ATRWert*meinSLFaktor) >  SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL) )
+   
+   
+   if(!MathAbs(ratio*volume_step-NormalizeDouble(Faktor * LotgroessenBerechnung(),2)) > 0.0000001)
+   if( NormalizeDouble(Faktor * LotgroessenBerechnung(),2) > SymbolInfoDouble(Symbol(),SYMBOL_VOLUME_MIN))
+   if( NormalizeDouble(Faktor * LotgroessenBerechnung(),2) < SymbolInfoDouble(Symbol(),SYMBOL_VOLUME_MAX))
+   if( PositionsTotal() < 1 )
+   if(EMA() == "Verkaufen")
+   if( Stochastic() == "Verkaufen" )
+   if( weitereTradesShort == "Erlaubt" )
+   {
+      trade.Sell(NormalizeDouble(Faktor * LotgroessenBerechnung(),2),_Symbol,Bid,Bid+ATRWert*meinSLFaktor,Bid-ATRWert*meinTPFaktor,NULL);
+      weitereTradesShort = "Verboten";
+      StochasticSignal = "";
+   }
+   
+}
+
+
+
+// Funktionsbeginn Eckdaten
+void Eckdaten()
+{
+   trade.SetExpertMagicNumber(Magic_Number);
+
+   Stoch_Lower_Border = 100 - Stoch_Upper_Border;
+   
+   
+   
+}
+
+
+
+
+
+// Funktionsbeginn Mehrere Trades je Kerze
+void MultipleTrades()
+{
+   static datetime LastBar = 0;
+   datetime ThisBar = 0;
+   
+   // Welches Timeframe
+   if(TimeFrame == M1) ThisBar = (datetime)SeriesInfoInteger(_Symbol,PERIOD_M1,SERIES_LASTBAR_DATE);
+   if(TimeFrame == M2) ThisBar = (datetime)SeriesInfoInteger(_Symbol,PERIOD_M2,SERIES_LASTBAR_DATE);
+   if(TimeFrame == M3) ThisBar = (datetime)SeriesInfoInteger(_Symbol,PERIOD_M3,SERIES_LASTBAR_DATE);
+   if(TimeFrame == M4) ThisBar = (datetime)SeriesInfoInteger(_Symbol,PERIOD_M4,SERIES_LASTBAR_DATE);
+   if(TimeFrame == M5) ThisBar = (datetime)SeriesInfoInteger(_Symbol,PERIOD_M5,SERIES_LASTBAR_DATE);
+   if(TimeFrame == M6) ThisBar = (datetime)SeriesInfoInteger(_Symbol,PERIOD_M6,SERIES_LASTBAR_DATE);
+   if(TimeFrame == M10) ThisBar = (datetime)SeriesInfoInteger(_Symbol,PERIOD_M10,SERIES_LASTBAR_DATE);
+   if(TimeFrame == M12) ThisBar = (datetime)SeriesInfoInteger(_Symbol,PERIOD_M12,SERIES_LASTBAR_DATE);
+   if(TimeFrame == M15) ThisBar = (datetime)SeriesInfoInteger(_Symbol,PERIOD_M15,SERIES_LASTBAR_DATE);
+   if(TimeFrame == M20) ThisBar = (datetime)SeriesInfoInteger(_Symbol,PERIOD_M20,SERIES_LASTBAR_DATE);
+   if(TimeFrame == M30) ThisBar = (datetime)SeriesInfoInteger(_Symbol,PERIOD_M30,SERIES_LASTBAR_DATE);
+   if(TimeFrame == H1) ThisBar = (datetime)SeriesInfoInteger(_Symbol,PERIOD_H1,SERIES_LASTBAR_DATE);
+   if(TimeFrame == H2) ThisBar = (datetime)SeriesInfoInteger(_Symbol,PERIOD_H2,SERIES_LASTBAR_DATE);
+   if(TimeFrame == H3) ThisBar = (datetime)SeriesInfoInteger(_Symbol,PERIOD_H3,SERIES_LASTBAR_DATE);
+   if(TimeFrame == H4) ThisBar = (datetime)SeriesInfoInteger(_Symbol,PERIOD_H4,SERIES_LASTBAR_DATE);
+   if(TimeFrame == H6) ThisBar = (datetime)SeriesInfoInteger(_Symbol,PERIOD_H6,SERIES_LASTBAR_DATE);
+   
+   
+   
+   if(LastBar != ThisBar)
+   {
+      //printf("New bar: %s",TimeToString(ThisBar));
+      LastBar = ThisBar;
+      weitereTradesLong = "Erlaubt";
+      weitereTradesShort = "Erlaubt";
+   }
+}
+
+
+
+
+
+// Funktionsbeginn Chartausgabe
+void Chartausgabe()
+{
+   // Rechteck erstellen
+   ObjectCreate(ChartID(),"Rechteck",OBJ_RECTANGLE_LABEL,0,0,0);
+   ObjectSetInteger(ChartID(),"Rechteck",OBJPROP_XDISTANCE,10);
+   ObjectSetInteger(ChartID(),"Rechteck",OBJPROP_XSIZE,175);
+   ObjectSetInteger(ChartID(),"Rechteck",OBJPROP_YDISTANCE,160);
+   ObjectSetInteger(ChartID(),"Rechteck",OBJPROP_YSIZE,150);
+   ObjectSetInteger(ChartID(),"Rechteck",OBJPROP_CORNER,1);
+   ObjectSetInteger(ChartID(),"Rechteck",OBJPROP_BGCOLOR,clrWhite);
+   
+   
+   // Textzeile 0 Timeframe
+   string Zeile0 = "";
+   if(TimeFrame == M1) Zeile0 = "M1";
+   if(TimeFrame == M2) Zeile0 = "M2";
+   if(TimeFrame == M3) Zeile0 = "M3";
+   if(TimeFrame == M4) Zeile0 = "M4";
+   if(TimeFrame == M5) Zeile0 = "M5";
+   if(TimeFrame == M6) Zeile0 = "M6";
+   if(TimeFrame == M10) Zeile0 = "M10";
+   if(TimeFrame == M12) Zeile0 = "M12";
+   if(TimeFrame == M15) Zeile0 = "M15";
+   if(TimeFrame == M20) Zeile0 = "M20";
+   if(TimeFrame == M30) Zeile0 = "M30";
+   if(TimeFrame == H1) Zeile0 = "H1";
+   if(TimeFrame == H2) Zeile0 = "H2";
+   if(TimeFrame == H3) Zeile0 = "H3";
+   if(TimeFrame == H4) Zeile0 = "H4";
+   if(TimeFrame == H6) Zeile0 = "H6";
+   ObjectCreate(ChartID(),"Zeile0",OBJ_LABEL,0,0,0);
+   ObjectSetString(0,"Zeile0",OBJPROP_FONT,"Arial");
+   ObjectSetInteger(0,"Zeile0",OBJPROP_FONTSIZE,8);
+   ObjectSetInteger(0,"Zeile0",OBJPROP_COLOR,clrBlack);
+   ObjectSetString(ChartID(),"Zeile0",OBJPROP_TEXT,0,"Timeframe: " + Zeile0);
+   ObjectSetInteger(0,"Zeile0",OBJPROP_XDISTANCE,20);
+   ObjectSetInteger(0,"Zeile0",OBJPROP_YDISTANCE,150);
+   ObjectSetInteger(ChartID(),"Zeile0",OBJPROP_CORNER,1);
+   
+   // Textzeile 1 Risk per trade
+   ObjectCreate(ChartID(),"Zeile1",OBJ_LABEL,0,0,0);
+   ObjectSetString(0,"Zeile1",OBJPROP_FONT,"Arial");
+   ObjectSetInteger(0,"Zeile1",OBJPROP_FONTSIZE,8);
+   ObjectSetInteger(0,"Zeile1",OBJPROP_COLOR,clrBlack);
+   ObjectSetString(ChartID(),"Zeile1",OBJPROP_TEXT,0,"Risk per trade: " + DoubleToString(Risiko_in_Prozent,2) + " %");
+   ObjectSetInteger(0,"Zeile1",OBJPROP_XDISTANCE,20);
+   ObjectSetInteger(0,"Zeile1",OBJPROP_YDISTANCE,130);
+   ObjectSetInteger(ChartID(),"Zeile1",OBJPROP_CORNER,1);
+   
+   // Textzeile 2 schneller und langsamer EMA Value
+   ObjectCreate(ChartID(),"Zeile2",OBJ_LABEL,0,0,0);
+   ObjectSetString(0,"Zeile2",OBJPROP_FONT,"Arial");
+   ObjectSetInteger(0,"Zeile2",OBJPROP_FONTSIZE,8);
+   ObjectSetInteger(0,"Zeile2",OBJPROP_COLOR,clrBlack);
+   ObjectSetString(ChartID(),"Zeile2",OBJPROP_TEXT,0,"Fast EMA: " + IntegerToString(EMA_Value) + "   Slow EMA: " + IntegerToString(EMA_Value_slow));
+   ObjectSetInteger(0,"Zeile2",OBJPROP_XDISTANCE,20);
+   ObjectSetInteger(0,"Zeile2",OBJPROP_YDISTANCE,110);
+   ObjectSetInteger(ChartID(),"Zeile2",OBJPROP_CORNER,1);
+   
+   // Textzeile 3 Stoch_Period
+   ObjectCreate(ChartID(),"Zeile3",OBJ_LABEL,0,0,0);
+   ObjectSetString(0,"Zeile3",OBJPROP_FONT,"Arial");
+   ObjectSetInteger(0,"Zeile3",OBJPROP_FONTSIZE,8);
+   ObjectSetInteger(0,"Zeile3",OBJPROP_COLOR,clrBlack);
+   ObjectSetString(ChartID(),"Zeile3",OBJPROP_TEXT,0,"Stochastic K-Line: " + IntegerToString(Stoch_K_Wert) + "   Delay: " + IntegerToString(Stoch_K_Delay));
+   ObjectSetInteger(0,"Zeile3",OBJPROP_XDISTANCE,20);
+   ObjectSetInteger(0,"Zeile3",OBJPROP_YDISTANCE,90);
+   ObjectSetInteger(ChartID(),"Zeile3",OBJPROP_CORNER,1);
+   
+   // Textzeile 4 Stochastic Borders
+   ObjectCreate(ChartID(),"Zeile4",OBJ_LABEL,0,0,0);
+   ObjectSetString(0,"Zeile4",OBJPROP_FONT,"Arial");
+   ObjectSetInteger(0,"Zeile4",OBJPROP_FONTSIZE,8);
+   ObjectSetInteger(0,"Zeile4",OBJPROP_COLOR,clrBlack);
+   ObjectSetString(ChartID(),"Zeile4",OBJPROP_TEXT,0,"Stochastic Borders: " + IntegerToString(Stoch_Upper_Border) + " // " + IntegerToString(Stoch_Lower_Border));
+   ObjectSetInteger(0,"Zeile4",OBJPROP_XDISTANCE,20);
+   ObjectSetInteger(0,"Zeile4",OBJPROP_YDISTANCE,70);
+   ObjectSetInteger(ChartID(),"Zeile4",OBJPROP_CORNER,1);
+   
+   // Textzeile 5 SL und TP Faktor
+   ObjectCreate(ChartID(),"Zeile5",OBJ_LABEL,0,0,0);
+   ObjectSetString(0,"Zeile5",OBJPROP_FONT,"Arial");
+   ObjectSetInteger(0,"Zeile5",OBJPROP_FONTSIZE,8);
+   ObjectSetInteger(0,"Zeile5",OBJPROP_COLOR,clrBlack);
+   ObjectSetString(ChartID(),"Zeile5",OBJPROP_TEXT,0,"SL Factor: " + DoubleToString(meinSLFaktor,1) + "   TP Factor: " + DoubleToString(meinTPFaktor,1));
+   ObjectSetInteger(0,"Zeile5",OBJPROP_XDISTANCE,20);
+   ObjectSetInteger(0,"Zeile5",OBJPROP_YDISTANCE,50);
+   ObjectSetInteger(ChartID(),"Zeile5",OBJPROP_CORNER,1);
+   
+   // Textzeile 6 Asymm. Comp.
+   string AC_Ausgabe = "";
+   if(Asymmetric_Faktor == 1) AC_Ausgabe = "off";
+   if(Asymmetric_Faktor != 1) AC_Ausgabe = IntegerToString(Asymmetric_Faktor);
+   ObjectCreate(ChartID(),"Zeile6",OBJ_LABEL,0,0,0);
+   ObjectSetString(0,"Zeile6",OBJPROP_FONT,"Arial");
+   ObjectSetInteger(0,"Zeile6",OBJPROP_FONTSIZE,8);
+   ObjectSetInteger(0,"Zeile6",OBJPROP_COLOR,clrBlack);
+   ObjectSetString(ChartID(),"Zeile6",OBJPROP_TEXT,0,"Asymm. Compounding: " + AC_Ausgabe);
+   ObjectSetInteger(0,"Zeile6",OBJPROP_XDISTANCE,20);
+   ObjectSetInteger(0,"Zeile6",OBJPROP_YDISTANCE,30);
+   ObjectSetInteger(ChartID(),"Zeile6",OBJPROP_CORNER,1);
+}   
+
+
